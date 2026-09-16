@@ -138,6 +138,19 @@ and final checksum verification. CDN warmth and unrelated network traffic are
 uncontrolled; this measures the two deployed delivery strategies, not hosting
 providers in isolation with identical wire encodings.
 
+To compare R2 download concurrency with three rotated repetitions per setting
+(approximately 1.57 GB transferred), use the same bundle and run:
+
+```js
+await window.compareModelHosts(console.log,
+  [4, 6, 8, 6, 8, 4, 8, 4, 6].map(concurrency => ({ host: "r2", concurrency })),
+);
+```
+
+These are concurrent network requests inside one downloader. Adding image
+inference workers does not add download lanes: workers share a download lock
+and browser cache.
+
 `bun scripts/benchmark-model-download.mjs --baseline=HEAD` compares the working
 tree with a Git revision in fresh Chromium contexts. Add `--remote` to download
 real pinned files, and `--desktop` for BEN2. Remote mode downloads the file four

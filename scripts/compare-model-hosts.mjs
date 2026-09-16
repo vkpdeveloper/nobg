@@ -3,7 +3,13 @@
 import { downloadModelFile, MODEL_CACHE } from "../src/lib/model-download.ts";
 import { DESKTOP_MODEL, DESKTOP_ASSET_PATH, DEFAULT_MODEL_CDN_URL, MODEL_CHUNK_SIZE } from "../src/lib/model-config.ts";
 
-export async function compareModelHosts(onEvent = () => {}) {
+export async function compareModelHosts(onEvent = () => {}, variants = [
+  "huggingface", "r2", "r2", "huggingface", "huggingface", "r2",
+].map(host => ({ host, concurrency: 4 }))) {
+  if (!variants.length || variants.some(({ host, concurrency }) =>
+    !["huggingface", "r2"].includes(host) || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16)) {
+    throw new Error("Specify Hugging Face/R2 runs with 1–16 download lanes");
+  }
   const url = `https://huggingface.co/${DESKTOP_MODEL.id}/resolve/${DESKTOP_MODEL.revision}/${DESKTOP_MODEL.filename}`;
   const baseUrl = DEFAULT_MODEL_CDN_URL + DESKTOP_ASSET_PATH;
   const partCache = await caches.open("nobg-model-parts-v1");
@@ -16,23 +22,22 @@ export async function compareModelHosts(onEvent = () => {}) {
   const cache = await caches.open(MODEL_CACHE);
   const runId = crypto.randomUUID();
   const results = [];
-  const order = ["huggingface", "r2", "r2", "huggingface", "huggingface", "r2"];
-  for (const [index, host] of order.entries()) {
+  for (const [index, { host, concurrency }] of variants.entries()) {
     const cacheKey = `${location.origin}/__nobg_host_benchmark__/${runId}/${index}`;
     let firstHeadersMs = 0;
     let savingMs = 0;
     let payloadBytes = 0;
     const requests = [];
     const start = performance.now();
-    onEvent({ type: "start", run: index + 1, host });
+    onEvent({ type: "start", run: index + 1, host, concurrency });
     try {
       const response = await downloadModelFile({ url, cacheKey, size: DESKTOP_MODEL.size,
         ...(host === "r2" ? { compressed: { baseUrl, sha256: DESKTOP_MODEL.sha256 } } : {}),
       }, {
-        concurrency: 4,
+        concurrency,
         onProgress(progress) {
           if (progress.phase === "saving") savingMs = performance.now() - start;
-          onEvent({ type: "progress", run: index + 1, host, ...progress });
+          onEvent({ type: "progress", run: index + 1, host, concurrency, ...progress });
         },
         async fetch(input, init) {
           requests.push(String(input));
@@ -56,7 +61,7 @@ export async function compareModelHosts(onEvent = () => {}) {
       const cdnRequests = requests.filter(request => request.startsWith(baseUrl)).length;
       if (host === "r2" && (originRequests || cdnRequests !== 28)) throw new Error("R2 comparison used origin fallback or skipped CDN parts");
       if (host === "huggingface" && originRequests !== 27) throw new Error("Hugging Face comparison skipped model parts");
-      const result = { run: index + 1, host, seconds: +(savedMs / 1000).toFixed(3),
+      const result = { run: index + 1, host, concurrency, seconds: +(savedMs / 1000).toFixed(3),
         firstHeadersSeconds: +(firstHeadersMs / 1000).toFixed(3), finalSaveSeconds: +((savedMs - savingMs) / 1000).toFixed(3),
         payloadBytes, bytes: bytes.byteLength, sha256, originRequests, cdnRequests };
       results.push(result);
@@ -69,8 +74,8 @@ export async function compareModelHosts(onEvent = () => {}) {
     }
   }
   return { timestamp: new Date().toISOString(), userAgent: navigator.userAgent,
-    origin: location.origin, concurrency: 4, browserHttpCache: "no-store",
-    order, results, notes: "Same browser and network; no concurrent transfers. CDN cache warmth and other network traffic are uncontrolled. Times include decompression and durable cache save, exclude inference and final checksum verification." };
+    origin: location.origin, browserHttpCache: "no-store",
+    variants, results, notes: "Same browser and network; benchmark runs are sequential. CDN cache warmth and other network traffic are uncontrolled. Times include decompression and durable cache save, exclude inference and final checksum verification." };
 }
 
 // The standalone IIFE bundle can be pasted into an allowed app's DevTools.
