@@ -20,6 +20,9 @@
 # production
 /build
 
+# Model bundles are uploaded to external storage, never Git or Vercel.
+/.model-assets/
+
 # misc
 .DS_Store
 *.pem

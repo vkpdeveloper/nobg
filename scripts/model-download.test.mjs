@@ -5,17 +5,43 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { chromium } from "playwright";
 
 const dir = await mkdtemp(join(tmpdir(), "nobg-download-test-"));
 execFileSync("bun", ["build", "src/lib/model-download.ts", "--target=browser", `--outdir=${dir}`]);
 const moduleSource = await readFile(join(dir, "model-download.js"));
 const fixture = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const compressedParts = Array.from({ length: 8 }, (_, index) => gzipSync(fixture.subarray(index * 32, (index + 1) * 32)));
+const assetRequests = [];
 const requests = [];
 let active = 0;
 let peak = 0;
 let failureStart = -1;
+let releaseFirst;
+let overlappedFirstBody = false;
 const server = createServer((req, res) => {
+  if (req.url.startsWith("/assets/")) {
+    assetRequests.push(req.url);
+    if (req.url.endsWith("manifest.json")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ version: 1, sha256: req.url.includes("bad-manifest") ? "bad" : hash(fixture),
+        size: fixture.length, chunkSize: 32,
+        parts: compressedParts.map((part, index) => ({ compressedSize: part.length, size: 32,
+          sha256: hash(fixture.subarray(index * 32, (index + 1) * 32)) })),
+      }));
+    } else {
+      const index = Number(/part-(\d+)\.gz/.exec(req.url)[1]);
+      let bytes = compressedParts[index];
+      if (index === 2 && req.url.includes("corrupt")) bytes = Buffer.alloc(bytes.length, 0);
+      if (index === 2 && req.url.includes("wrong-hash")) bytes = gzipSync(fixture.subarray(0, 32));
+      res.writeHead(200, { "Content-Length": bytes.length, "Content-Type": "application/gzip" });
+      res.end(bytes);
+    }
+    return;
+  }
   if (req.url === "/module.js") {
     res.writeHead(200, { "Content-Type": "text/javascript" });
     res.end(moduleSource);
@@ -42,6 +68,30 @@ const server = createServer((req, res) => {
   const end = match ? Number(match[2]) : fixture.length - 1;
   requests.push({ path: req.url, start, end });
   peak = Math.max(peak, ++active);
+  if (req.url.includes("headers-first")) {
+    res.writeHead(206, {
+      "Content-Range": `bytes ${start}-${end}/${fixture.length}`,
+      "Content-Length": end - start + 1,
+    });
+    res.flushHeaders();
+    if (start === 0) {
+      const timer = setTimeout(() => releaseFirst?.(), 1000);
+      releaseFirst = () => {
+        clearTimeout(timer);
+        releaseFirst = undefined;
+        active--;
+        res.end(fixture.subarray(start, end + 1));
+      };
+    } else {
+      if (releaseFirst) {
+        overlappedFirstBody = true;
+        releaseFirst();
+      }
+      active--;
+      res.end(fixture.subarray(start, end + 1));
+    }
+    return;
+  }
   setTimeout(() => {
     active--;
     if (start === failureStart) {
@@ -164,6 +214,66 @@ try {
   assert.deepEqual(await download(page, saveFailure), [...fixture]);
   assert.equal(requests.length, beforeSaveRetry);
   pass("a failed final save keeps every part; retry requires no network");
+
+  assert.deepEqual(await download(page, file("headers-first")), [...fixture]);
+  assert.ok(overlappedFirstBody, "other ranges must start before the first body finishes");
+  assert.equal(requests.filter(({ path, start }) => path.includes("headers-first") && start === 0).length, 1);
+  pass("parallel transfers start after the first headers, reusing the in-flight body");
+
+  const compressedFile = (name) => ({ ...file(name), compressed: { baseUrl: `${origin}/assets/${name}`, sha256: hash(fixture) } });
+  const beforeCompressed = requests.length;
+  const compressed = compressedFile("compressed");
+  assert.deepEqual(await download(page, compressed), [...fixture]);
+  assert.equal(requests.length, beforeCompressed, "valid compressed assets require no Hugging Face ranges");
+  assert.equal(assetRequests.length, 9, "one manifest and eight gzip files");
+  await page.reload();
+  await page.evaluate(() => { window.fetch = () => Promise.reject(new Error("No network allowed")); });
+  assert.deepEqual(await download(page, compressed), [...fixture]);
+  assert.equal(assetRequests.length, 9, "saved models do not even fetch the manifest");
+  await page.reload();
+  pass("compressed chunks reconstruct the exact file and reuse the existing offline cache");
+
+  for (const name of ["corrupt", "wrong-hash", "bad-manifest"]) {
+    const before = requests.length;
+    assert.deepEqual(await download(page, compressedFile(name)), [...fixture]);
+    assert.ok(requests.length > before, "bad CDN data falls back to the original ranges");
+    if (name !== "bad-manifest") assert.ok(requests.slice(before).some(({ start }) => start === 64), "the corrupt part is replaced");
+  }
+  pass("invalid manifests, broken gzip, and wrong decoded hashes recover from the pinned origin");
+
+  failureStart = 64;
+  const resumed = compressedFile("corrupt-resume");
+  await assert.rejects(download(page, resumed), /invalid part/);
+  const completed = await page.evaluate(async () => (await (await caches.open("nobg-model-parts-v1")).keys())
+    .filter((request) => request.url.includes("corrupt-resume"))
+    .map((request) => Number(new URL(request.url).searchParams.get("nobg-part"))));
+  assert.ok(completed.length > 0);
+  const beforeResumeAssets = assetRequests.length;
+  const beforeResumeRanges = requests.length;
+  failureStart = -1;
+  assert.deepEqual(await download(page, resumed), [...fixture]);
+  for (const url of assetRequests.slice(beforeResumeAssets)) {
+    const part = /part-(\d+)\.gz/.exec(url);
+    if (part) assert.ok(!completed.includes(Number(part[1])));
+  }
+  for (const request of requests.slice(beforeResumeRanges)) assert.ok(!completed.includes(request.start / 32));
+  pass("compressed and origin chunks share the same resumable cache");
+
+  const beforeCompressedQuota = requests.length;
+  const compressedQuota = await page.evaluate(async (descriptor) => {
+    const { downloadModelFile } = await import("/module.js");
+    const put = Cache.prototype.put;
+    Cache.prototype.put = function (request, response) {
+      if (String(request).includes("nobg-part=")) throw new DOMException("Full", "QuotaExceededError");
+      return put.call(this, request, response);
+    };
+    try { await downloadModelFile(descriptor, { chunkSize: 32, onProgress() {} }); }
+    catch (error) { return error.message; }
+    finally { Cache.prototype.put = put; }
+  }, compressedFile("compressed-quota"));
+  assert.match(compressedQuota, /Not enough browser storage/);
+  assert.equal(requests.length, beforeCompressedQuota, "storage errors must not cause origin re-downloads");
+  pass("compressed-part storage failures remain storage errors");
   console.log(`${passed} browser download tests passed`);
 } finally {
   await browser.close();

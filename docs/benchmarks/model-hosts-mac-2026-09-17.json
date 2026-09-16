@@ -1,0 +1,111 @@
+{
+  "browserHttpCache": "no-store",
+  "concurrency": 4,
+  "notes": "Same browser and network; no concurrent transfers. CDN cache warmth and other network traffic are uncontrolled. Times include decompression and durable cache save, exclude inference and final checksum verification.",
+  "order": [
+    "huggingface",
+    "r2",
+    "r2",
+    "huggingface",
+    "huggingface",
+    "r2"
+  ],
+  "origin": "https://nobg-nu.vercel.app",
+  "results": [
+    {
+      "bytes": 219121675,
+      "cdnRequests": 0,
+      "finalSaveSeconds": 0.815,
+      "firstHeadersSeconds": 1.13,
+      "host": "huggingface",
+      "originRequests": 27,
+      "payloadBytes": 219121675,
+      "run": 1,
+      "seconds": 47.59,
+      "sha256": "dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1"
+    },
+    {
+      "bytes": 219121675,
+      "cdnRequests": 28,
+      "finalSaveSeconds": 0.556,
+      "firstHeadersSeconds": 0.072,
+      "host": "r2",
+      "originRequests": 0,
+      "payloadBytes": 174215526,
+      "run": 2,
+      "seconds": 37.181,
+      "sha256": "dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1"
+    },
+    {
+      "bytes": 219121675,
+      "cdnRequests": 28,
+      "finalSaveSeconds": 0.478,
+      "firstHeadersSeconds": 0.068,
+      "host": "r2",
+      "originRequests": 0,
+      "payloadBytes": 174215526,
+      "run": 3,
+      "seconds": 42.861,
+      "sha256": "dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1"
+    },
+    {
+      "bytes": 219121675,
+      "cdnRequests": 0,
+      "finalSaveSeconds": 0.613,
+      "firstHeadersSeconds": 0.681,
+      "host": "huggingface",
+      "originRequests": 27,
+      "payloadBytes": 219121675,
+      "run": 4,
+      "seconds": 58.124,
+      "sha256": "dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1"
+    },
+    {
+      "bytes": 219121675,
+      "cdnRequests": 0,
+      "finalSaveSeconds": 0.488,
+      "firstHeadersSeconds": 0.556,
+      "host": "huggingface",
+      "originRequests": 27,
+      "payloadBytes": 219121675,
+      "run": 5,
+      "seconds": 53.432,
+      "sha256": "dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1"
+    },
+    {
+      "bytes": 219121675,
+      "cdnRequests": 28,
+      "finalSaveSeconds": 0.521,
+      "firstHeadersSeconds": 0.071,
+      "host": "r2",
+      "originRequests": 0,
+      "payloadBytes": 174215526,
+      "run": 6,
+      "seconds": 36.858,
+      "sha256": "dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1"
+    }
+  ],
+  "timestamp": "2026-09-16T21:52:45.103Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.40 Chrome/152.0.7977.65 Safari/537.36",
+  "summary": {
+    "huggingface": {
+      "runs": [
+        47.59,
+        58.124,
+        53.432
+      ],
+      "median": 53.432,
+      "mean": 53.04866666666667
+    },
+    "r2": {
+      "runs": [
+        37.181,
+        42.861,
+        36.858
+      ],
+      "median": 37.181,
+      "mean": 38.96666666666667
+    },
+    "medianTimeReductionPercent": 30.414358436891753
+  }
+}

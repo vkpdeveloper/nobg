@@ -46,6 +46,10 @@ bun run dev
 
 Then open http://localhost:3000. Copy `.env.example` to `.env.local` if you want to set a public URL or analytics.
 
+Desktop model downloads use the external R2 CDN by default, with Hugging Face
+fallback and persistent browser caching. See [model hosting and benchmarks](docs/model-download.md)
+for configuration, same-device download comparisons, and the Mac WebGPU fix.
+
 ## License
 
 MIT

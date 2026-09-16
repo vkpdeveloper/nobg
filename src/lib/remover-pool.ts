@@ -19,7 +19,8 @@ interface WorkerRecord {
   worker: Worker;
   ready: boolean;
   busy: boolean;
-  jobId?: string;
+  job?: { id: string; file: Blob };
+  forceWasm: boolean;
 }
 
 type StatusListener = (s: EngineStatus) => void;
@@ -28,6 +29,7 @@ type JobListener = (e: JobEvent) => void;
 type WorkerOutMessage =
   | { type: "progress"; loaded: number; total: number; phase?: ModelPhase }
   | { type: "ready"; device: Device }
+  | { type: "fallback" }
   | { type: "result"; id: string; blob: Blob; width: number; height: number }
   | { type: "error"; id?: string; message: string };
 
@@ -36,6 +38,7 @@ class RemoverPool {
   private queue: { id: string; file: Blob }[] = [];
   private concurrency = 1;
   private started = false;
+  private forceWasm = false;
   private status: EngineStatus = { state: "idle", progress: 0, device: null };
   private statusListeners = new Set<StatusListener>();
   private jobListeners = new Set<JobListener>();
@@ -79,9 +82,10 @@ class RemoverPool {
   }
 
   private failWorker(rec: WorkerRecord, message: string) {
+    if (!this.workers.includes(rec)) return;
     rec.worker.terminate();
     this.workers = this.workers.filter((worker) => worker !== rec);
-    if (rec.jobId) this.emitJob({ id: rec.jobId, state: "error", message });
+    if (rec.job) this.emitJob({ id: rec.job.id, state: "error", message });
     if (this.workers.length === 0) this.failPending(message);
     else this.pump();
   }
@@ -99,7 +103,7 @@ class RemoverPool {
     void navigator.storage?.persist?.().catch(() => false);
     try {
       const caps = await detectCapabilities();
-      this.concurrency = caps.concurrency;
+      this.concurrency = this.forceWasm ? 1 : caps.concurrency;
     } catch {
       this.concurrency = 1;
     }
@@ -125,14 +129,14 @@ class RemoverPool {
       if (this.workers.length === 0) this.failPending("Could not start image processing. Reload and try again.");
       return;
     }
-    const rec: WorkerRecord = { worker, ready: false, busy: false };
+    const rec: WorkerRecord = { worker, ready: false, busy: false, forceWasm: this.forceWasm };
     worker.onmessage = (e: MessageEvent) => this.onMessage(rec, e.data);
     worker.onerror = () => this.failWorker(rec, "Image processing stopped. Try a smaller image or reload and try again.");
     worker.onmessageerror = () => this.failWorker(rec, "Could not read the processed image. Reload and try again.");
     this.workers.push(rec);
     if (this.status.state !== "ready")
       this.setStatus({ state: "loading", progress: 0, device: null });
-    worker.postMessage({ type: "load" });
+    worker.postMessage({ type: "load", ...(this.forceWasm ? { device: "wasm" } : {}) });
   }
 
   private maybeGrow() {
@@ -151,14 +155,32 @@ class RemoverPool {
       if (!rec.ready || rec.busy) continue;
       const job = this.queue.shift()!;
       rec.busy = true;
-      rec.jobId = job.id;
+      rec.job = job;
       this.emitJob({ id: job.id, state: "processing" });
       rec.worker.postMessage({ type: "process", id: job.id, file: job.file });
     }
   }
 
   private onMessage(rec: WorkerRecord, msg: WorkerOutMessage) {
+    if (!this.workers.includes(rec)) return;
     switch (msg.type) {
+      case "fallback": {
+        if (rec.forceWasm) {
+          this.failWorker(rec, "CPU image processing could not start. Reload and try again.");
+          break;
+        }
+        // Stop all GPU workers before allocating the CPU model. Replay active
+        // jobs as well as the remaining queue; no uploaded image is lost.
+        const interrupted = this.workers.flatMap((worker) => worker.job ? [worker.job] : []);
+        for (const worker of this.workers) worker.worker.terminate();
+        this.workers = [];
+        this.queue.unshift(...interrupted);
+        this.forceWasm = true;
+        this.concurrency = 1;
+        this.setStatus({ state: "loading", progress: 0, device: null, phase: "loading" });
+        this.spawn();
+        break;
+      }
       case "progress": {
         if (this.status.state === "loading" || this.status.state === "idle") {
           const progress = msg.total > 0 ? Math.min(msg.loaded / msg.total, 1) : 0;
@@ -184,7 +206,7 @@ class RemoverPool {
       }
       case "result": {
         rec.busy = false;
-        rec.jobId = undefined;
+        rec.job = undefined;
         this.emitJob({
           id: msg.id,
           state: "done",
@@ -198,7 +220,7 @@ class RemoverPool {
       case "error": {
         rec.busy = false;
         if (msg.id) {
-          rec.jobId = undefined;
+          rec.job = undefined;
           this.emitJob({ id: msg.id, state: "error", message: msg.message });
         } else {
           this.failWorker(rec, msg.message);

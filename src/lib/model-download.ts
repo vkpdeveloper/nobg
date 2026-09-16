@@ -1,15 +1,15 @@
+import { DESKTOP_MODEL, DESKTOP_ASSET_PATH, MODEL_CHUNK_SIZE, type CompressedModelManifest } from "./model-config";
+
 // Keep the existing cache keys so people who already have the model keep it.
-export const MODEL_ID = "onnx-community/BEN2-ONNX";
+export const MODEL_ID = DESKTOP_MODEL.id;
 export const MOBILE_MODEL_ID = "xrds/isnet-general-onnx-int8";
 // New downloads use immutable URLs, including all of their byte ranges.
-const REVISION = "c552aa82688edce09f0ac9d2e31ad53d9d629010";
 const MODEL_DOWNLOADS = [
-  { id: MODEL_ID, revision: REVISION, filename: "onnx/model_fp16.onnx", size: 219_121_675 },
+  DESKTOP_MODEL,
   { id: MOBILE_MODEL_ID, revision: "71eff2372ec9c8edbc6ca637ded591423d23b65a", filename: "onnx/model_quantized.onnx", size: 44_229_662 },
 ];
 export const MODEL_CACHE = "transformers-cache";
 const PART_CACHE = "nobg-model-parts-v1";
-const CHUNK_SIZE = 8 * 1024 * 1024;
 
 export type ModelPhase = "loading" | "waiting" | "downloading" | "saving";
 export type ModelProgress = { phase: ModelPhase; loaded: number; total: number };
@@ -18,6 +18,7 @@ export interface ModelFile {
   url: string;
   cacheKey: string;
   size?: number;
+  compressed?: { baseUrl: string; sha256: string };
 }
 
 interface DownloadOptions {
@@ -64,7 +65,7 @@ export async function downloadModelFile(
       }
 
       const total = file.size;
-      const chunkSize = options.chunkSize ?? CHUNK_SIZE;
+      const chunkSize = options.chunkSize ?? MODEL_CHUNK_SIZE;
       const count = Math.ceil(total / chunkSize);
       const parts = await caches.open(PART_CACHE);
       const key = (index: number) => `${file.url}?nobg-part=${index}&size=${chunkSize}`;
@@ -82,7 +83,20 @@ export async function downloadModelFile(
       }
       progress();
 
-      const downloadPart = async (index: number): Promise<Response | undefined> => {
+      let manifest: CompressedModelManifest | undefined;
+      if (pending.length && file.compressed && typeof DecompressionStream !== "undefined") {
+        try {
+          const response = await networkFetch(`${file.compressed.baseUrl}/manifest.json`, {
+            signal: AbortSignal.timeout(5000),
+          });
+          if (response.ok) {
+            const candidate = await response.json();
+            if (isCompressedManifest(candidate, file, chunkSize)) manifest = candidate;
+          } else await response.body?.cancel();
+        } catch { /* Development/older deployments can still use Hugging Face. */ }
+      }
+
+      const requestPart = async (index: number): Promise<Response> => {
         const start = index * chunkSize;
         const end = Math.min(start + chunkSize, total) - 1;
         const response = await networkFetch(file.url, {
@@ -92,41 +106,65 @@ export async function downloadModelFile(
           cache: "no-store",
           signal: AbortSignal.timeout(120_000),
         });
-        // Probe the first missing range before starting concurrent requests. If a
-        // host ignores Range, consume that one full response instead of duplicating it.
+        // Only wait for headers to confirm range support, not the first 8 MB body.
+        // If a host ignores Range, consume its full response just once.
         if (response.status === 200) return response;
         if (response.status !== 206 || response.headers.get("content-range") !== `bytes ${start}-${end}/${total}`) {
           await response.body?.cancel();
           throw new ModelDownloadError("The model download returned an invalid part. Reload to resume.");
         }
-        const bytes = await readBytes(response, end - start + 1, (loaded) => {
-          sizes[index] = loaded;
-          progress();
-        });
+        return response;
+      };
+
+      const partProgress = (index: number) => (loaded: number) => {
+        sizes[index] = loaded;
+        progress();
+      };
+      const savePart = async (index: number, bytes: Uint8Array<ArrayBuffer>) => {
         await parts.put(key(index), new Response(bytes, {
           headers: { "content-length": String(bytes.byteLength) },
         }));
       };
 
-      const first = pending.shift();
-      const fullResponse = first === undefined ? undefined : await downloadPart(first);
-      if (fullResponse) {
-        const bytes = await readBytes(fullResponse, total, (loaded) => report("downloading", loaded));
+      // Static gzip files need no range probe. Start all lanes immediately.
+      const first = manifest ? undefined : pending.shift();
+      const firstResponse = first === undefined ? undefined : await requestPart(first);
+      if (firstResponse?.status === 200) {
+        const bytes = await readBytes(firstResponse, total, (loaded) => report("downloading", loaded));
         report("saving", total);
         await cache.put(file.cacheKey, new Response(bytes, {
           headers: { "content-length": String(total) },
         }));
       } else {
         let failed = false;
+        // The probed response occupies one lane, including while its body is read.
+        // Reuse it instead of fetching the first range a second time.
+        if (first !== undefined) pending.unshift(first);
         const lanes = Array.from({ length: Math.min(options.concurrency ?? 4, pending.length) }, async () => {
           while (!failed && pending.length) {
             const index = pending.shift()!;
             try {
-              const unexpectedFull = await downloadPart(index);
-              if (unexpectedFull) {
-                await unexpectedFull.body?.cancel();
-                throw new ModelDownloadError("The server stopped supporting partial downloads. Reload to resume.");
+              let bytes: Uint8Array<ArrayBuffer> | undefined;
+              if (manifest) {
+                try {
+                  bytes = await readCompressedPart(file.compressed!.baseUrl, index, manifest, networkFetch, partProgress(index));
+                } catch {
+                  // Only retry transfer/decoding failures at the origin. A cache
+                  // write failure below must remain a storage error.
+                  manifest = undefined;
+                  sizes[index] = 0;
+                  progress();
+                }
               }
+              if (!bytes) {
+                const response = index === first ? firstResponse! : await requestPart(index);
+                if (response.status === 200) {
+                  await response.body?.cancel();
+                  throw new ModelDownloadError("The server stopped supporting partial downloads. Reload to resume.");
+                }
+                bytes = await readBytes(response, Math.min(chunkSize, total - index * chunkSize), partProgress(index));
+              }
+              await savePart(index, bytes);
             } catch (error) {
               failed = true;
               throw error;
@@ -174,6 +212,44 @@ export async function downloadModelFile(
   }
 }
 
+function isCompressedManifest(value: unknown, file: ModelFile, chunkSize: number): value is CompressedModelManifest {
+  if (!value || typeof value !== "object") return false;
+  const m = value as CompressedModelManifest;
+  return m.version === 1 && m.sha256 === file.compressed?.sha256 && m.size === file.size &&
+    m.chunkSize === chunkSize && Array.isArray(m.parts) && m.parts.length === Math.ceil(m.size / chunkSize) &&
+    m.parts.every((part, index) => part && part.size === Math.min(chunkSize, m.size - index * chunkSize) &&
+      Number.isSafeInteger(part.compressedSize) && part.compressedSize > 0 && part.compressedSize <= chunkSize + 65536 &&
+      typeof part.sha256 === "string" && /^[a-f0-9]{64}$/.test(part.sha256));
+}
+
+async function readCompressedPart(
+  baseUrl: string, index: number, manifest: CompressedModelManifest,
+  networkFetch: typeof fetch, onProgress: (loaded: number) => void,
+) {
+  const part = manifest.parts[index];
+  const response = await networkFetch(`${baseUrl}/part-${index}.gz`, {
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (response.status !== 200 || !response.body) {
+    await response.body?.cancel();
+    throw new Error("Compressed part unavailable");
+  }
+  let received = 0;
+  const counted = response.body.pipeThrough(new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
+    transform(chunk, controller) {
+      received += chunk.byteLength;
+      if (received > part.compressedSize) throw new Error("Oversized compressed part");
+      controller.enqueue(chunk);
+    },
+    flush() { if (received !== part.compressedSize) throw new Error("Truncated compressed part"); },
+  }));
+  const bytes = await readBytes(new Response(counted.pipeThrough(new DecompressionStream("gzip"))), part.size, onProgress);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (hash !== part.sha256) throw new Error("Compressed part checksum mismatch");
+  return bytes;
+}
+
 async function readBytes(response: Response, size: number, onProgress: (loaded: number) => void) {
   if (!response.body) throw new ModelDownloadError("The model download was empty. Reload to resume.");
   const bytes = new Uint8Array(size);
@@ -196,8 +272,17 @@ async function readBytes(response: Response, size: number, onProgress: (loaded: 
   }
 }
 
-export function createModelFetch(onProgress: DownloadOptions["onProgress"]) {
+export function createModelFetch(onProgress: DownloadOptions["onProgress"], cdn?: string) {
   const networkFetch = globalThis.fetch.bind(globalThis);
+  // Opt in to a separately hosted model CDN. Never route model traffic through
+  // the application's origin or add large model assets to the Vercel build.
+  let compressedBaseUrl: string | undefined;
+  if (cdn) {
+    try {
+      const base = new URL(`${cdn.replace(/\/$/, "")}${DESKTOP_ASSET_PATH}`);
+      if (base.protocol === "https:" && base.origin !== globalThis.location.origin) compressedBaseUrl = base.href;
+    } catch { /* Invalid optional CDN settings fall back to the pinned origin. */ }
+  }
   return (input: string | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     const model = MODEL_DOWNLOADS.find(({ id }) => url.startsWith(`https://huggingface.co/${id}/resolve/main/`));
@@ -209,6 +294,9 @@ export function createModelFetch(onProgress: DownloadOptions["onProgress"]) {
       cacheKey: url,
       url: url.replace("/resolve/main/", `/resolve/${model.revision}/`),
       size: filename === model.filename ? model.size : undefined,
+      ...(compressedBaseUrl && model.id === MODEL_ID && filename === model.filename ? {
+        compressed: { baseUrl: compressedBaseUrl, sha256: DESKTOP_MODEL.sha256 },
+      } : {}),
     }, { onProgress: (progress) => {
       if (filename === model.filename) onProgress(progress);
     }, fetch: networkFetch });

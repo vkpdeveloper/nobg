@@ -11,15 +11,19 @@ globalThis.self = { postMessage: (message) => messages.push(message) };
 Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
   userAgent: "Android Mobile", gpu: { requestAdapter: async () => ({}) },
 } });
-const { ModelDownloadError, MOBILE_MODEL_ID } = await import("../src/lib/model-download.ts");
+const { ModelDownloadError, MOBILE_MODEL_ID, MODEL_ID } = await import("../src/lib/model-download.ts");
 mock.module("../src/lib/processing-image.ts", () => ({ mobileImageCanvas: async () => ({ width: 1536, height: 1024 }) }));
 mock.module("@huggingface/transformers", () => ({
   env: { backends: { onnx: { wasm: {} } } },
-  RawImage: { fromCanvas: (canvas) => canvas },
+  RawImage: { fromCanvas: (canvas) => canvas, fromBlob: async () => ({ width: 2048, height: 1536 }) },
   pipeline: async (_task, model, options) => {
     calls.push(`load:${options.device}`);
-    assert.equal(model, MOBILE_MODEL_ID);
-    assert.equal(options.dtype, "q8");
+    const mobile = navigator.userAgent.includes("Mobile");
+    assert.equal(model, mobile ? MOBILE_MODEL_ID : MODEL_ID);
+    assert.equal(options.dtype, mobile ? "q8" : "fp16");
+    assert.deepEqual(options.session_options,
+      !mobile && options.device === "webgpu" ? { graphOptimizationLevel: "basic" } : undefined,
+      "only desktop WebGPU needs the BEN2 fusion workaround");
     if (failDownload) throw new ModelDownloadError("Download interrupted");
     if (options.device === "webgpu" && failGpuLoad) throw new Error("GPU initialization failed");
     const remover = async (image) => {
@@ -41,18 +45,23 @@ const send = (data) => self.onmessage({ data });
 await freshWorker();
 await send({ type: "load" });
 await send({ type: "process", id: "photo", file: new Blob() });
-assert.deepEqual(calls, ["load:webgpu", "run:webgpu", "dispose:webgpu", "load:wasm", "run:wasm"]);
+assert.deepEqual(calls, ["load:webgpu", "run:webgpu"]);
+assert.equal(messages.at(-1).type, "fallback", "GPU errors must request a clean worker, never reuse the failed runtime");
+await freshWorker();
+await send({ type: "load", device: "wasm" });
+await send({ type: "process", id: "photo", file: new Blob() });
+assert.deepEqual(calls, ["load:wasm", "run:wasm"]);
 assert.equal(messages.at(-1).type, "result");
 assert.equal(messages.at(-1).width, 1536);
 await send({ type: "process", id: "next-photo", file: new Blob() });
 assert.equal(calls.at(-1), "run:wasm", "later photos reuse the CPU fallback");
-assert.equal(calls.filter((call) => call.startsWith("load:")).length, 2);
+assert.equal(calls.filter((call) => call.startsWith("load:")).length, 1);
 
 failGpuLoad = true;
 await freshWorker();
 await send({ type: "load" });
-assert.deepEqual(calls, ["load:webgpu", "load:wasm"]);
-assert.equal(messages.at(-1).device, "wasm");
+assert.deepEqual(calls, ["load:webgpu"]);
+assert.equal(messages.at(-1).type, "fallback");
 
 failDownload = true;
 await freshWorker();
@@ -60,4 +69,17 @@ await send({ type: "load" });
 assert.deepEqual(calls, ["load:webgpu"], "a download failure must not start another model download");
 assert.equal(messages.at(-1).type, "error");
 assert.match(messages.at(-1).message, /Download interrupted/);
-console.log("PASS GPU inference disposal and CPU retry, fallback reuse, initialization fallback, and download error handling");
+
+failDownload = false;
+failGpuLoad = false;
+navigator.userAgent = "Macintosh Chrome";
+await freshWorker();
+await send({ type: "load" });
+await send({ type: "process", id: "desktop", file: new Blob() });
+assert.equal(messages.at(-1).type, "fallback");
+await freshWorker();
+await send({ type: "load", device: "wasm" });
+await send({ type: "process", id: "desktop", file: new Blob() });
+assert.equal(messages.at(-1).type, "result");
+assert.equal(messages.at(-1).width, 2048, "desktop fallback keeps the original model, fp16, and resolution");
+console.log("PASS fresh-worker GPU recovery, fallback reuse, initialization recovery, download errors, and desktop FP16 preservation");
