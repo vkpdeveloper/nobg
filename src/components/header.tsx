@@ -21,7 +21,7 @@ function GithubIcon({ className }: { className?: string }) {
 export function Header() {
   return (
     <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5">
-      <span className="text-lg font-semibold tracking-tight">NOBG</span>
+      <span className="text-lg font-semibold tracking-tight">nobg</span>
       <div className="flex items-center gap-1">
         <SoundToggle />
         <ThemeToggle />

@@ -135,7 +135,7 @@ export default function Home() {
       )}
       <footer className="mx-auto w-full max-w-5xl px-6 pb-6">
         <p className="text-xs text-muted-foreground">
-          NOBG · Free and open source ·{" "}
+          nobg · Free and open source ·{" "}
           <a href={GITHUB_URL} target="_blank" rel="noreferrer" onClick={() => track("github_clicked", { location: "footer" })} className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
             GitHub
           </a>

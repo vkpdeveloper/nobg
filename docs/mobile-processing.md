@@ -7,8 +7,11 @@ It handles general subjects, rather than only portraits. Results can differ
 from the desktop BEN2 model, especially around fine edges.
 
 Mobile processing uses one worker and a single WASM thread. It tries WebGPU,
-then retries with WASM if GPU initialization or inference fails. A failed GPU
-pipeline is disposed before loading the CPU fallback. Download/storage errors
+then retries with WASM in a fresh worker if GPU initialization or inference fails.
+The pool terminates the GPU workers before starting the CPU worker and replays
+unfinished images. This resets Transformers.js's rejected runtime promise chains
+and releases the GPU resources. The CPU worker reads the same model and precision
+from the shared cache; desktop recovery likewise retains BEN2 FP16. Download/storage errors
 are reported without trying to download the same model through another device.
 
 Before copying decoded pixels into JavaScript, large photos are drawn into a

@@ -59,7 +59,7 @@ export default async function Image() {
               lineHeight: 1,
             }}
           >
-            NOBG
+            nobg
           </div>
           <div
             style={{

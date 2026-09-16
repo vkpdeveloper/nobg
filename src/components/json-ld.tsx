@@ -2,8 +2,8 @@ import { GITHUB_URL, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site";
 
 export const FAQS = [
   {
-    q: "Is NOBG really free?",
-    a: "Yes. NOBG is free and open source with no accounts, limits or watermarks.",
+    q: "Is nobg really free?",
+    a: "Yes. nobg is free and open source with no accounts, limits or watermarks.",
   },
   {
     q: "Are my images uploaded anywhere?",
@@ -15,7 +15,7 @@ export const FAQS = [
   },
   {
     q: "Can I remove backgrounds from multiple images at once?",
-    a: "Yes. Drop as many images as you like and NOBG processes them in a batch, adapting to your device's performance.",
+    a: "Yes. Drop as many images as you like and nobg processes them in a batch, adapting to your device's performance.",
   },
 ] as const;
 
