@@ -1,0 +1,17 @@
+# NOBG
+
+NOBG is a free, open-source background remover that runs entirely in the
+browser. Background removal happens on-device — images are never uploaded
+to any server, so it is private by design and works without an account.
+
+## Key facts
+
+- 100% free, unlimited, no watermarks, no signup.
+- Fully client-side: nothing is uploaded, ever.
+- Input: PNG, JPG, WEBP (multiple files supported, batch processing).
+- Output: transparent PNG, downloadable or copyable to the clipboard.
+- Works offline after the first visit.
+
+## Links
+
+- Source code: https://github.com/vkpdeveloper/nobg

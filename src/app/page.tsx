@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { Layers, Lock, Sparkles } from "lucide-react";
+import { ChevronDown, Layers, Lock, Sparkles } from "lucide-react";
 import { Header } from "@/components/header";
 import { Dropzone } from "@/components/dropzone";
 import { ImageCard } from "@/components/image-card";
+import { FAQS, JsonLd } from "@/components/json-ld";
+import { GITHUB_URL } from "@/lib/site";
 import { useRemover } from "@/hooks/use-remover";
 
 const CleanupEditor = dynamic(() => import("@/components/cleanup-editor"), { ssr: false });
@@ -104,6 +106,21 @@ export default function Home() {
             </div>
           ))}
         </section>
+
+        <section className="border-t border-border/60 py-6">
+          <h2 className="mb-2 px-2 text-sm font-medium">Questions</h2>
+          <div className="space-y-0.5">
+            {FAQS.map((f) => (
+              <details key={f.q} className="group rounded-lg">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-2 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  {f.q}
+                  <ChevronDown className="size-4 shrink-0 transition-transform duration-200 group-open:rotate-180" />
+                </summary>
+                <p className="px-2 pb-3 text-sm text-muted-foreground">{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </section>
       </main>
       {editingJob?.resultBlob && (
         <CleanupEditor key={editingJob.id} job={editingJob} onClose={() => setEditingId(null)} onApply={(blob) => {
@@ -114,11 +131,12 @@ export default function Home() {
       <footer className="mx-auto w-full max-w-5xl px-6 pb-6">
         <p className="text-xs text-muted-foreground">
           NOBG · Free and open source ·{" "}
-          <a href="https://github.com/vkpdeveloper/nobg" target="_blank" rel="noreferrer" className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
+          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
             GitHub
           </a>
         </p>
       </footer>
+      <JsonLd />
     </>
   );
 }

@@ -1,3 +1,4 @@
+import { GITHUB_URL } from "@/lib/site";
 import { SoundToggle } from "./sound-toggle";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -22,7 +23,7 @@ export function Header() {
         <SoundToggle />
         <ThemeToggle />
         <a
-          href="https://github.com/vkpdeveloper/nobg"
+          href={GITHUB_URL}
           target="_blank"
           rel="noreferrer"
           aria-label="GitHub"

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const geist = Geist({
@@ -10,15 +11,49 @@ const geist = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "NOBG — Remove image backgrounds",
-  description:
-    "Free, private, and unlimited background removal. Your images never leave your device.",
-  openGraph: {
-    title: "NOBG — Remove image backgrounds",
-    description:
-      "Free, private, and unlimited background removal. Your images never leave your device.",
-    type: "website",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: SITE_TITLE,
+    template: "%s · NOBG",
   },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: [
+    "background remover",
+    "remove background",
+    "transparent PNG",
+    "free background remover",
+    "on-device",
+    "privacy",
+    "no upload",
+    "batch background removal",
+  ],
+  authors: [{ name: "vkpdeveloper" }],
+  creator: "vkpdeveloper",
+  alternates: { canonical: "/" },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+    },
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  category: "technology",
 };
 
 export const viewport: Viewport = {
