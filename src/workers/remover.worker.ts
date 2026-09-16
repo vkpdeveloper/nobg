@@ -1,27 +1,15 @@
 import { pipeline, RawImage, env } from "@huggingface/transformers";
+import { createModelFetch, MODEL_ID, ModelDownloadError } from "../lib/model-download";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
-
-const MODEL_ID = "onnx-community/BEN2-ONNX";
+env.fetch = createModelFetch((progress) => self.postMessage({ type: "progress", ...progress }));
 
 type Remover = (input: RawImage) => Promise<RawImage | RawImage[]>;
 
 let remover: Remover | null = null;
 let removerDevice: "webgpu" | "wasm" | null = null;
 let loading: Promise<Remover> | null = null;
-
-const files = new Map<string, { loaded: number; total: number }>();
-
-function postProgress() {
-  let loaded = 0;
-  let total = 0;
-  for (const f of files.values()) {
-    loaded += f.loaded;
-    total += f.total;
-  }
-  self.postMessage({ type: "progress", loaded, total });
-}
 
 async function hasWebGPU(): Promise<boolean> {
   const nav = navigator as Navigator & {
@@ -44,13 +32,14 @@ async function createPipeline(device: "webgpu" | "wasm"): Promise<Remover> {
     progress_callback: (info: FileProgressInfo) => {
       if (
         (info.status === "progress" || info.status === "done") &&
-        info.file
+        info.file?.endsWith(".onnx")
       ) {
-        files.set(info.file, {
-          loaded: info.loaded ?? info.total ?? 0,
-          total: info.total ?? 0,
+        self.postMessage({
+          type: "progress",
+          phase: "loading",
+          loaded: info.status === "done" ? 1 : info.loaded ?? 0,
+          total: info.status === "done" ? 1 : info.total ?? 0,
         });
-        postProgress();
       }
     },
   })) as unknown as Remover;
@@ -72,6 +61,8 @@ async function load(): Promise<Remover> {
         self.postMessage({ type: "ready", device });
         return r;
       } catch (e) {
+        // Changing inference device cannot fix a failed download/storage write.
+        if (e instanceof ModelDownloadError) throw e;
         lastErr = e;
       }
     }

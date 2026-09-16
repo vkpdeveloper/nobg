@@ -14,16 +14,22 @@ export function ReadyIndicator({ engine }: { engine: EngineStatus }) {
   if (engine.state === "error") {
     return (
       <div className="text-xs text-destructive/80">
-        Unavailable in this browser
+        {engine.message ?? "Unavailable in this browser"}
       </div>
     );
   }
   const pct = Math.round(engine.progress * 100);
+  const phase = engine.state === "loading" ? engine.phase : undefined;
+  const label = phase === "downloading" ? "Downloading model…"
+    : phase === "saving" ? "Saving model…"
+    : phase === "waiting" ? "Checking saved model…"
+    : phase === "loading" ? "Loading saved model…"
+    : "Starting engine…";
   return (
     <div className="flex items-center gap-2.5">
       <span className="text-xs text-muted-foreground">
-        Preparing…
-        {pct > 0 && <span className="tabular-nums"> {pct}%</span>}
+        {label}
+        {phase === "downloading" && <span className="tabular-nums"> {pct}%</span>}
       </span>
       <span className="h-0.5 w-[120px] overflow-hidden rounded-full bg-muted">
         <span

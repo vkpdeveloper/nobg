@@ -1,12 +1,13 @@
 import { detectCapabilities } from "./device";
+import type { ModelPhase } from "./model-download";
 
 export type Device = "webgpu" | "wasm";
 
 export type EngineStatus =
   | { state: "idle"; progress: number; device: null }
-  | { state: "loading"; progress: number; device: null }
+  | { state: "loading"; progress: number; device: null; phase?: ModelPhase }
   | { state: "ready"; progress: number; device: Device }
-  | { state: "error"; progress: number; device: null };
+  | { state: "error"; progress: number; device: null; message?: string };
 
 export type JobEvent =
   | { id: string; state: "processing" }
@@ -23,7 +24,7 @@ type StatusListener = (s: EngineStatus) => void;
 type JobListener = (e: JobEvent) => void;
 
 type WorkerOutMessage =
-  | { type: "progress"; loaded: number; total: number }
+  | { type: "progress"; loaded: number; total: number; phase?: ModelPhase }
   | { type: "ready"; device: Device }
   | { type: "result"; id: string; blob: Blob; width: number; height: number }
   | { type: "error"; id?: string; message: string };
@@ -63,6 +64,9 @@ class RemoverPool {
   async warmup() {
     if (this.started || typeof window === "undefined") return;
     this.started = true;
+    // Persistence can only be requested from the window, not from a worker.
+    // Browsers may deny it; the saved model is still reused for as long as it exists.
+    void navigator.storage?.persist?.().catch(() => false);
     try {
       const caps = await detectCapabilities();
       this.concurrency = caps.concurrency;
@@ -122,7 +126,7 @@ class RemoverPool {
       case "progress": {
         if (this.status.state === "loading" || this.status.state === "idle") {
           const progress = msg.total > 0 ? Math.min(msg.loaded / msg.total, 1) : 0;
-          this.setStatus({ state: "loading", progress, device: null });
+          this.setStatus({ state: "loading", progress, device: null, phase: msg.phase });
         }
         break;
       }
@@ -151,7 +155,7 @@ class RemoverPool {
         if (msg.id) {
           this.emitJob({ id: msg.id, state: "error", message: msg.message });
         } else if (!rec.ready && this.status.state !== "ready") {
-          this.setStatus({ state: "error", progress: 0, device: null });
+          this.setStatus({ state: "error", progress: 0, device: null, message: msg.message });
         }
         this.pump();
         break;
