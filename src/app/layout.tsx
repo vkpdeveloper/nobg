@@ -3,6 +3,7 @@ import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL } from "@/lib/site";
+import { PostHogProvider } from "./providers";
 import "./globals.css";
 
 const geist = Geist({
@@ -77,7 +78,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           enableSystem
           disableTransitionOnChange
         >
-          <TooltipProvider>{children}</TooltipProvider>
+          <PostHogProvider>
+            <TooltipProvider>{children}</TooltipProvider>
+          </PostHogProvider>
         </ThemeProvider>
       </body>
     </html>
