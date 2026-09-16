@@ -1,9 +1,0 @@
-{
-  "nodeModulesDir": "auto",
-  "tasks": {
-    "dev": "NODE_OPTIONS= next dev",
-    "build": "NODE_OPTIONS= next build",
-    "start": "NODE_OPTIONS= next start",
-    "lint": "eslint"
-  }
-}
