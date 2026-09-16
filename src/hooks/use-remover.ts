@@ -12,6 +12,7 @@ export interface Job {
   status: "queued" | "processing" | "done" | "error";
   resultUrl?: string;
   resultBlob?: Blob;
+  cleanupBaseBlob?: Blob;
   width?: number;
   height?: number;
   error?: string;
@@ -127,5 +128,20 @@ export function useRemover() {
     });
   }, []);
 
-  return { jobs, engine, addFiles, removeJob, clearAll };
+  const updateResult = useCallback((id: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    setJobs((prev) => {
+      if (!prev.some((job) => job.id === id)) {
+        URL.revokeObjectURL(url);
+        return prev;
+      }
+      return prev.map((job) => {
+        if (job.id !== id) return job;
+        if (job.resultUrl) URL.revokeObjectURL(job.resultUrl);
+        return { ...job, cleanupBaseBlob: job.cleanupBaseBlob ?? job.resultBlob, resultBlob: blob, resultUrl: url };
+      });
+    });
+  }, []);
+
+  return { jobs, engine, addFiles, removeJob, clearAll, updateResult };
 }

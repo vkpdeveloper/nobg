@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Download, Loader2, X } from "lucide-react";
+import { Check, Copy, Download, Loader2, Scissors, X } from "lucide-react";
 import { cn } from "cn";
 import {
   Tooltip,
@@ -17,10 +17,12 @@ export function ImageCard({
   job,
   index,
   onRemove,
+  onEdit,
 }: {
   job: Job;
   index: number;
   onRemove: (id: string) => void;
+  onEdit: (id: string) => void;
 }) {
   const [comparing, setComparing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -151,6 +153,11 @@ export function ImageCard({
             </p>
           )}
         </div>
+        {done && (
+          <CardAction label="Clean up" title="Clean up" style={{ minWidth: 40, minHeight: 40 }} onClick={() => onEdit(job.id)}>
+            <Scissors className="size-4" />
+          </CardAction>
+        )}
         {clipboardSupported ? (
           <CardAction label="Copy" onClick={copy} disabled={!done}>
             <span className="relative flex size-4 items-center justify-center">

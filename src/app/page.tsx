@@ -1,10 +1,14 @@
 "use client";
 
+import { useState } from "react";
+import dynamic from "next/dynamic";
 import { Layers, Lock, Sparkles } from "lucide-react";
 import { Header } from "@/components/header";
 import { Dropzone } from "@/components/dropzone";
 import { ImageCard } from "@/components/image-card";
 import { useRemover } from "@/hooks/use-remover";
+
+const CleanupEditor = dynamic(() => import("@/components/cleanup-editor"), { ssr: false });
 
 const FEATURES = [
   {
@@ -25,7 +29,9 @@ const FEATURES = [
 ];
 
 export default function Home() {
-  const { jobs, engine, addFiles, removeJob, clearAll } = useRemover();
+  const { jobs, engine, addFiles, removeJob, clearAll, updateResult } = useRemover();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editingJob = jobs.find((job) => job.id === editingId);
   const doneCount = jobs.filter((j) => j.status === "done").length;
 
   const downloadAll = async () => {
@@ -81,7 +87,7 @@ export default function Home() {
             )}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {jobs.map((job, i) => (
-                <ImageCard key={job.id} job={job} index={i} onRemove={removeJob} />
+                <ImageCard key={job.id} job={job} index={i} onRemove={removeJob} onEdit={setEditingId} />
               ))}
             </div>
           </section>
@@ -99,6 +105,12 @@ export default function Home() {
           ))}
         </section>
       </main>
+      {editingJob?.resultBlob && (
+        <CleanupEditor key={editingJob.id} job={editingJob} onClose={() => setEditingId(null)} onApply={(blob) => {
+          updateResult(editingJob.id, blob);
+          setEditingId(null);
+        }} />
+      )}
       <footer className="mx-auto w-full max-w-5xl px-6 pb-6">
         <p className="text-xs text-muted-foreground">
           NOBG · Free and open source ·{" "}
