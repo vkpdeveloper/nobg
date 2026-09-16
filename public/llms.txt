@@ -1,6 +1,6 @@
-# NOBG
+# nobg
 
-NOBG is a free, open-source background remover that runs entirely in the
+nobg is a free, open-source background remover that runs entirely in the
 browser. Background removal happens on-device — images are never uploaded
 to any server, so it is private by design and works without an account.
 
