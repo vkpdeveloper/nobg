@@ -22,7 +22,9 @@ export function Header() {
         <SoundToggle />
         <ThemeToggle />
         <a
-          href="#"
+          href="https://github.com/vkpdeveloper/nobg"
+          target="_blank"
+          rel="noreferrer"
           aria-label="GitHub"
           className="flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-[color,background-color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96]"
         >

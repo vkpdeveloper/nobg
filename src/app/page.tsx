@@ -102,7 +102,7 @@ export default function Home() {
       <footer className="mx-auto w-full max-w-5xl px-6 pb-6">
         <p className="text-xs text-muted-foreground">
           NOBG · Free and open source ·{" "}
-          <a href="#" className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
+          <a href="https://github.com/vkpdeveloper/nobg" target="_blank" rel="noreferrer" className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
             GitHub
           </a>
         </p>
