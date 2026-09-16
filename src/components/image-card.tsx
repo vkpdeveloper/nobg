@@ -8,6 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { track } from "@/lib/analytics";
 import type { Job } from "@/hooks/use-remover";
 
 const clipboardSupported =
@@ -27,6 +28,7 @@ export function ImageCard({
   const [comparing, setComparing] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const comparedRef = useRef(false);
 
   const done = job.status === "done";
 
@@ -43,6 +45,7 @@ export function ImageCard({
       await navigator.clipboard.write([
         new ClipboardItem({ "image/png": job.resultBlob }),
       ]);
+      track("result_copied");
       setCopied(true);
       if (copyTimer.current) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1500);
@@ -60,7 +63,14 @@ export function ImageCard({
     >
       <div
         className="checkerboard group relative aspect-square select-none"
-        onPointerDown={() => done && setComparing(true)}
+        onPointerDown={() => {
+          if (!done) return;
+          setComparing(true);
+          if (!comparedRef.current) {
+            comparedRef.current = true;
+            track("compare_held");
+          }
+        }}
         onPointerUp={() => setComparing(false)}
         onPointerLeave={() => setComparing(false)}
         onContextMenu={(e) => e.preventDefault()}
@@ -187,6 +197,7 @@ export function ImageCard({
           <a
             href={job.resultUrl}
             download={`${base}-nobg.png`}
+            onClick={() => track("result_downloaded")}
             aria-label="Download"
             className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96]"
           >

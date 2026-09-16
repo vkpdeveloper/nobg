@@ -1,4 +1,7 @@
+"use client";
+
 import { GITHUB_URL } from "@/lib/site";
+import { track } from "@/lib/analytics";
 import { SoundToggle } from "./sound-toggle";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -24,6 +27,7 @@ export function Header() {
         <ThemeToggle />
         <a
           href={GITHUB_URL}
+          onClick={() => track("github_clicked", { location: "header" })}
           target="_blank"
           rel="noreferrer"
           aria-label="GitHub"

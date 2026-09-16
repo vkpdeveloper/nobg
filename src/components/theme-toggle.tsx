@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import { Moon, Sun } from "lucide-react";
+import { track } from "@/lib/analytics";
 
 const EASE = "cubic-bezier(0.2,0,0,1)";
 const noop = () => () => {};
@@ -21,7 +22,11 @@ export function ThemeToggle() {
     <button
       type="button"
       aria-label="Toggle theme"
-      onClick={() => setTheme(dark ? "light" : "dark")}
+      onClick={() => {
+        const next = dark ? "light" : "dark";
+        setTheme(next);
+        track("theme_toggled", { theme: next });
+      }}
       className="relative flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-[color,background-color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96]"
     >
       <Sun

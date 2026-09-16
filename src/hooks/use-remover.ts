@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { removerPool, type EngineStatus } from "@/lib/remover-pool";
 import { sounds } from "@/lib/sounds";
+import { track } from "@/lib/analytics";
+
+export type FileSource = "drop" | "browse" | "paste";
 
 export interface Job {
   id: string;
@@ -27,11 +30,14 @@ export function useRemover() {
   );
   const inFlightRef = useRef(new Set<string>());
   const batchDoneRef = useRef(0);
+  const startedAtRef = useRef(new Map<string, number>());
+  const sizeRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     const offStatus = removerPool.onStatus(setEngine);
     const offJob = removerPool.onJob((e) => {
       if (e.state === "processing") {
+        startedAtRef.current.set(e.id, Date.now());
         setJobs((prev) =>
           prev.map((j) =>
             j.id === e.id
@@ -41,6 +47,15 @@ export function useRemover() {
         );
       } else if (e.state === "done") {
         const url = URL.createObjectURL(e.blob);
+        track("image_processed", {
+          duration_ms: startedAtRef.current.has(e.id)
+            ? Date.now() - startedAtRef.current.get(e.id)!
+            : undefined,
+          device: removerPool.getStatus().device,
+          width: e.width,
+          height: e.height,
+          input_bytes: sizeRef.current.get(e.id),
+        });
         setJobs((prev) =>
           prev.map((j) =>
             j.id === e.id
@@ -67,7 +82,8 @@ export function useRemover() {
           }
         }
       } else {
-        inFlightRef.current.delete(e.id);
+        if (inFlightRef.current.delete(e.id))
+          track("image_failed", { message: e.message });
         setJobs((prev) =>
           prev.map((j) =>
             j.id === e.id
@@ -89,11 +105,12 @@ export function useRemover() {
     };
   }, []);
 
-  const addFiles = useCallback((files: FileList | File[]) => {
+  const addFiles = useCallback((files: FileList | File[], source: FileSource) => {
     const images = Array.from(files).filter((f) =>
       f.type.startsWith("image/"),
     );
     if (images.length === 0) return;
+    track("images_added", { count: images.length, source });
     const created: Job[] = images.map((f) => ({
       id: crypto.randomUUID(),
       file: f,
@@ -101,13 +118,17 @@ export function useRemover() {
       originalUrl: URL.createObjectURL(f),
       status: "queued",
     }));
-    for (const job of created) inFlightRef.current.add(job.id);
+    for (const job of created) {
+      inFlightRef.current.add(job.id);
+      sizeRef.current.set(job.id, job.file.size);
+    }
     setJobs((prev) => [...prev, ...created]);
     for (const job of created) removerPool.enqueue(job.id, job.file);
   }, []);
 
   const removeJob = useCallback((id: string) => {
     inFlightRef.current.delete(id);
+    track("image_removed");
     setJobs((prev) => {
       const job = prev.find((j) => j.id === id);
       if (job) {

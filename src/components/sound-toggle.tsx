@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 import { sounds } from "@/lib/sounds";
+import { track } from "@/lib/analytics";
 
 export function SoundToggle() {
   const enabled = useSyncExternalStore(
@@ -15,7 +16,11 @@ export function SoundToggle() {
     <button
       type="button"
       aria-label={enabled ? "Mute sounds" : "Unmute sounds"}
-      onClick={() => sounds.setEnabled(!enabled)}
+      onClick={() => {
+        const next = !enabled;
+        sounds.setEnabled(next);
+        track("sound_toggled", { enabled: next });
+      }}
       className="flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-[color,background-color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96]"
     >
       {enabled ? (

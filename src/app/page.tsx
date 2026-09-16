@@ -8,6 +8,7 @@ import { Dropzone } from "@/components/dropzone";
 import { ImageCard } from "@/components/image-card";
 import { FAQS, JsonLd } from "@/components/json-ld";
 import { GITHUB_URL } from "@/lib/site";
+import { track } from "@/lib/analytics";
 import { useRemover } from "@/hooks/use-remover";
 
 const CleanupEditor = dynamic(() => import("@/components/cleanup-editor"), { ssr: false });
@@ -37,6 +38,7 @@ export default function Home() {
   const doneCount = jobs.filter((j) => j.status === "done").length;
 
   const downloadAll = async () => {
+    track("download_all_clicked", { count: doneCount });
     for (const job of jobs) {
       if (job.status !== "done" || !job.resultUrl) continue;
       const a = document.createElement("a");
@@ -79,7 +81,10 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
-                    onClick={clearAll}
+                    onClick={() => {
+                      track("clear_all_clicked", { count: jobs.length });
+                      clearAll();
+                    }}
                     className="flex h-8 items-center rounded-lg px-3 text-sm text-muted-foreground transition-[color,background-color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96]"
                   >
                     Clear all
@@ -131,7 +136,7 @@ export default function Home() {
       <footer className="mx-auto w-full max-w-5xl px-6 pb-6">
         <p className="text-xs text-muted-foreground">
           NOBG · Free and open source ·{" "}
-          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
+          <a href={GITHUB_URL} target="_blank" rel="noreferrer" onClick={() => track("github_clicked", { location: "footer" })} className="underline-offset-4 transition-colors hover:text-foreground hover:underline">
             GitHub
           </a>
         </p>

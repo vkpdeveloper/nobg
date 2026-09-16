@@ -11,7 +11,7 @@ export function Dropzone({
   onFiles,
   engine,
 }: {
-  onFiles: (files: File[]) => void;
+  onFiles: (files: File[], source: "drop" | "browse" | "paste") => void;
   engine: EngineStatus;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -31,7 +31,7 @@ export function Dropzone({
         .filter((f): f is File => f !== null);
       if (files.length > 0) {
         sounds.unlock();
-        onFilesRef.current(files);
+        onFilesRef.current(files, "paste");
       }
     };
     document.addEventListener("paste", onPaste);
@@ -69,7 +69,7 @@ export function Dropzone({
         dragDepth.current = 0;
         setDragging(false);
         sounds.unlock();
-        onFiles(Array.from(e.dataTransfer.files));
+        onFiles(Array.from(e.dataTransfer.files), "drop");
       }}
       className={cn(
         "relative flex min-h-64 w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-3xl px-6 py-12 text-center outline-none transition-[border-color,background-color,box-shadow] duration-200 focus-visible:ring-3 focus-visible:ring-ring/50",
@@ -102,7 +102,8 @@ export function Dropzone({
         accept="image/*"
         className="hidden"
         onChange={(e) => {
-          if (e.target.files?.length) onFiles(Array.from(e.target.files));
+          if (e.target.files?.length)
+            onFiles(Array.from(e.target.files), "browse");
           e.target.value = "";
         }}
       />

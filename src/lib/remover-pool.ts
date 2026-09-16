@@ -1,4 +1,5 @@
 import { detectCapabilities, isMobileDevice } from "./device";
+import { track } from "./analytics";
 import type { ModelPhase } from "./model-download";
 
 export type Device = "webgpu" | "wasm";
@@ -38,6 +39,9 @@ class RemoverPool {
   private status: EngineStatus = { state: "idle", progress: 0, device: null };
   private statusListeners = new Set<StatusListener>();
   private jobListeners = new Set<JobListener>();
+  private warmStartedAt = 0;
+  private trackedReady = false;
+  private trackedFailed = false;
 
   getStatus(): EngineStatus {
     return this.status;
@@ -65,6 +69,10 @@ class RemoverPool {
   private failPending(message: string) {
     this.started = false;
     this.setStatus({ state: "error", progress: 0, device: null, message });
+    if (!this.trackedFailed) {
+      this.trackedFailed = true;
+      track("engine_failed", { message });
+    }
     for (const job of this.queue.splice(0)) {
       this.emitJob({ id: job.id, state: "error", message });
     }
@@ -81,6 +89,7 @@ class RemoverPool {
   async warmup() {
     if (this.started || typeof window === "undefined") return;
     this.started = true;
+    this.warmStartedAt = performance.now();
     if (!window.isSecureContext) {
       this.failPending("Open this site over HTTPS to process images on your phone.");
       return;
@@ -161,6 +170,14 @@ class RemoverPool {
         rec.ready = true;
         if (msg.device === "wasm") this.concurrency = 1;
         this.setStatus({ state: "ready", progress: 1, device: msg.device });
+        if (!this.trackedReady) {
+          this.trackedReady = true;
+          track("engine_ready", {
+            device: msg.device,
+            load_ms: Math.round(performance.now() - this.warmStartedAt),
+            concurrency: this.concurrency,
+          });
+        }
         this.maybeGrow();
         this.pump();
         break;
