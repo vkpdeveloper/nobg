@@ -87,13 +87,13 @@ export function Dropzone({
         <Upload className="size-5" />
       </div>
       <div>
-        <p className="font-medium">Drop images here</p>
+        <p className="font-medium">{engine.mobile ? "Tap to choose images" : "Drop images here"}</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          or click to browse
+          {engine.mobile ? "Standard size · up to 1536 px" : "or click to browse"}
         </p>
       </div>
       <p className="text-xs text-muted-foreground/80">
-        PNG, JPG, WEBP · multiple files supported · ⌘/Ctrl+V to paste
+        {engine.mobile ? "PNG, JPG, WEBP · processed one at a time" : "PNG, JPG, WEBP · multiple files supported · ⌘/Ctrl+V to paste"}
       </p>
       <input
         ref={inputRef}

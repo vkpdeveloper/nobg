@@ -147,6 +147,7 @@ export function ImageCard({
       <div className="flex items-center gap-1 border-t border-border/60 px-3 py-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm">{job.name}</p>
+          {job.status === "error" && <p className="text-xs text-destructive">{job.error}</p>}
           {job.width != null && job.height != null && (
             <p className="text-xs tabular-nums text-muted-foreground">
               {job.width}×{job.height}

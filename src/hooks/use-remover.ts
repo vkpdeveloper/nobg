@@ -29,7 +29,6 @@ export function useRemover() {
   const batchDoneRef = useRef(0);
 
   useEffect(() => {
-    void removerPool.warmup();
     const offStatus = removerPool.onStatus(setEngine);
     const offJob = removerPool.onJob((e) => {
       if (e.state === "processing") {
@@ -83,6 +82,7 @@ export function useRemover() {
         );
       }
     });
+    void removerPool.warmup();
     return () => {
       offStatus();
       offJob();

@@ -9,6 +9,12 @@ interface GPUAdapter {
   requestAdapter(): Promise<unknown>;
 }
 
+export function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Mobi|Android/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
 function gpuNavigator(): (Navigator & { gpu?: GPUAdapter }) | null {
   return typeof navigator === "undefined" ? null : navigator;
 }
@@ -17,10 +23,10 @@ export async function detectCapabilities(): Promise<Capabilities> {
   const nav = gpuNavigator();
   const webgpu =
     !!nav?.gpu && !!(await nav.gpu.requestAdapter().catch(() => null));
-  const cores = navigator.hardwareConcurrency ?? 4;
+  const cores = nav?.hardwareConcurrency ?? 4;
   const memoryGB =
-    (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
-  const mobile = /Mobi|Android/i.test(navigator.userAgent);
+    (nav as (Navigator & { deviceMemory?: number }) | null)?.deviceMemory ?? 4;
+  const mobile = isMobileDevice();
 
   let concurrency = 1;
   if (webgpu && !mobile) {

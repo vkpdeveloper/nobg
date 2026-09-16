@@ -1,8 +1,12 @@
 // Keep the existing cache keys so people who already have the model keep it.
 export const MODEL_ID = "onnx-community/BEN2-ONNX";
-const MODEL_BASE = `https://huggingface.co/${MODEL_ID}/resolve/main/`;
+export const MOBILE_MODEL_ID = "xrds/isnet-general-onnx-int8";
 // New downloads use immutable URLs, including all of their byte ranges.
 const REVISION = "c552aa82688edce09f0ac9d2e31ad53d9d629010";
+const MODEL_DOWNLOADS = [
+  { id: MODEL_ID, revision: REVISION, filename: "onnx/model_fp16.onnx", size: 219_121_675 },
+  { id: MOBILE_MODEL_ID, revision: "71eff2372ec9c8edbc6ca637ded591423d23b65a", filename: "onnx/model_quantized.onnx", size: 44_229_662 },
+];
 export const MODEL_CACHE = "transformers-cache";
 const PART_CACHE = "nobg-model-parts-v1";
 const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -196,16 +200,17 @@ export function createModelFetch(onProgress: DownloadOptions["onProgress"]) {
   const networkFetch = globalThis.fetch.bind(globalThis);
   return (input: string | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
-    if (!url.startsWith(MODEL_BASE) || (init?.method && init.method !== "GET")) {
+    const model = MODEL_DOWNLOADS.find(({ id }) => url.startsWith(`https://huggingface.co/${id}/resolve/main/`));
+    if (!model || (init?.method && init.method !== "GET")) {
       return networkFetch(input, init);
     }
-    const filename = url.slice(MODEL_BASE.length);
+    const filename = url.slice(`https://huggingface.co/${model.id}/resolve/main/`.length);
     return downloadModelFile({
       cacheKey: url,
-      url: url.replace("/resolve/main/", `/resolve/${REVISION}/`),
-      size: filename === "onnx/model_fp16.onnx" ? 219_121_675 : undefined,
+      url: url.replace("/resolve/main/", `/resolve/${model.revision}/`),
+      size: filename === model.filename ? model.size : undefined,
     }, { onProgress: (progress) => {
-      if (filename === "onnx/model_fp16.onnx") onProgress(progress);
+      if (filename === model.filename) onProgress(progress);
     }, fetch: networkFetch });
   };
 }
