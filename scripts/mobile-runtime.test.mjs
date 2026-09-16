@@ -1,0 +1,102 @@
+// Run with: bun scripts/mobile-runtime.test.mjs
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chromium } from "playwright";
+
+const created = [];
+class FakeWorker {
+  messages = [];
+  terminated = false;
+  constructor() { created.push(this); }
+  postMessage(message) { this.messages.push(message); }
+  terminate() { this.terminated = true; }
+  emit(data) { this.onmessage({ data }); }
+}
+globalThis.Worker = FakeWorker;
+globalThis.window = { isSecureContext: true };
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
+  userAgent: "Android Mobile", hardwareConcurrency: 8, deviceMemory: 8,
+} });
+const { removerPool } = await import("../src/lib/remover-pool.ts");
+const events = [];
+removerPool.onJob((event) => events.push(event));
+const file = new Blob(["test"]);
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+removerPool.enqueue("load-failure", file);
+await settle();
+created[0].emit({ type: "error", message: "Download failed" });
+assert.equal(removerPool.getStatus().state, "error");
+assert.ok(created[0].terminated);
+assert.deepEqual(events.pop(), { id: "load-failure", state: "error", message: "Download failed" });
+
+removerPool.enqueue("active", file);
+removerPool.enqueue("queued", file);
+await settle();
+assert.equal(created.length, 2, "retry starts a fresh worker");
+created[1].emit({ type: "ready", device: "webgpu" });
+assert.equal(created.length, 2, "mobile uses only one worker even with eight cores");
+assert.equal(events.at(-1).id, "active");
+created[1].onerror();
+assert.ok(created[1].terminated);
+assert.deepEqual(events.slice(-2).map(({ id, state }) => ({ id, state })), [
+  { id: "active", state: "error" }, { id: "queued", state: "error" },
+]);
+
+removerPool.enqueue("bad-file", file);
+removerPool.enqueue("good-file", file);
+await settle();
+created[2].emit({ type: "ready", device: "wasm" });
+created[2].emit({ type: "error", id: "bad-file", message: "Invalid image" });
+assert.equal(events.at(-1).id, "good-file", "per-image error does not block the next image");
+assert.equal(events.at(-1).state, "processing");
+created[2].emit({ type: "result", id: "good-file", blob: file, width: 1, height: 1 });
+assert.equal(events.at(-1).state, "done");
+created[2].onerror();
+window.isSecureContext = false;
+removerPool.enqueue("insecure", file);
+assert.match(events.at(-1).message, /HTTPS/);
+console.log("PASS worker initialization failure, crash, retry, queue recovery, mobile concurrency, and HTTPS errors");
+
+const dir = await mkdtemp(join(tmpdir(), "nobg-mobile-test-"));
+execFileSync("bun", ["build", "src/lib/processing-image.ts", "--target=browser", `--outdir=${dir}`]);
+const moduleSource = await readFile(join(dir, "processing-image.js"));
+const server = createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": req.url === "/module.js" ? "text/javascript" : "text/html" });
+  res.end(req.url === "/module.js" ? moduleSource : "<!doctype html><title>Mobile image tests</title>");
+});
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const browser = await chromium.launch();
+try {
+  const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  const sizes = await page.evaluate(async () => {
+    const { mobileImageCanvas } = await import("/module.js");
+    const results = [];
+    for (const [width, height] of [[4000, 3000], [3000, 4000], [600, 400], [1, 4000]]) {
+      const original = new OffscreenCanvas(width, height);
+      const ctx = original.getContext("2d");
+      ctx.fillStyle = "red";
+      ctx.fillRect(0, 0, width / 2, height);
+      const resized = await mobileImageCanvas(await original.convertToBlob());
+      const output = resized.getContext("2d");
+      results.push({ width: resized.width, height: resized.height,
+        alpha: output.getImageData(resized.width - 1, 0, 1, 1).data[3] });
+    }
+    let rejected = false;
+    try { await mobileImageCanvas(new Blob(["not an image"])); } catch { rejected = true; }
+    return { results, rejected };
+  });
+  assert.deepEqual(sizes.results.map(({ width, height }) => [width, height]), [[1536, 1152], [1152, 1536], [600, 400], [1, 1536]]);
+  assert.equal(sizes.results[0].alpha, 0, "resizing preserves transparency");
+  assert.ok(sizes.rejected, "invalid images produce an error");
+  console.log("PASS browser photo resizing, aspect ratio, no upscaling, transparency, and invalid images");
+} finally {
+  await browser.close();
+  await new Promise((resolve) => server.close(resolve));
+  await rm(dir, { recursive: true, force: true });
+}

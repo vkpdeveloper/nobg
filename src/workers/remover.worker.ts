@@ -1,11 +1,18 @@
 import { pipeline, RawImage, env } from "@huggingface/transformers";
-import { createModelFetch, MODEL_ID, ModelDownloadError } from "../lib/model-download";
+import { createModelFetch, MODEL_ID, MOBILE_MODEL_ID, ModelDownloadError } from "../lib/model-download";
+import { isMobileDevice } from "../lib/device";
+import { mobileImageCanvas } from "../lib/processing-image";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 env.fetch = createModelFetch((progress) => self.postMessage({ type: "progress", ...progress }));
 
-type Remover = (input: RawImage) => Promise<RawImage | RawImage[]>;
+type Remover = ((input: RawImage) => Promise<RawImage | RawImage[]>) & { dispose(): Promise<void> };
+
+const mobile = isMobileDevice();
+// Keep CPU execution within a phone's memory budget, including on pages without
+// cross-origin isolation (where shared-memory threading is unavailable).
+if (mobile && env.backends.onnx.wasm) env.backends.onnx.wasm.numThreads = 1;
 
 let remover: Remover | null = null;
 let removerDevice: "webgpu" | "wasm" | null = null;
@@ -26,9 +33,10 @@ interface FileProgressInfo {
 }
 
 async function createPipeline(device: "webgpu" | "wasm"): Promise<Remover> {
-  return (await pipeline("background-removal", MODEL_ID, {
+  const lightweight = mobile;
+  return (await pipeline("background-removal", lightweight ? MOBILE_MODEL_ID : MODEL_ID, {
     device,
-    dtype: "fp16",
+    dtype: lightweight ? "q8" : "fp16",
     progress_callback: (info: FileProgressInfo) => {
       if (
         (info.status === "progress" || info.status === "done") &&
@@ -77,13 +85,17 @@ async function load(): Promise<Remover> {
 
 async function process(id: string, file: Blob) {
   const r = await load();
-  const image = await RawImage.fromBlob(file);
+  const image = mobile
+    ? RawImage.fromCanvas(await mobileImageCanvas(file))
+    : await RawImage.fromBlob(file);
   let output: RawImage | RawImage[];
   try {
     output = await r(image);
   } catch (e) {
     if (removerDevice !== "webgpu") throw e;
     remover = null;
+    removerDevice = null;
+    await r.dispose().catch(() => {});
     const fallback = await createPipeline("wasm");
     remover = fallback;
     removerDevice = "wasm";
