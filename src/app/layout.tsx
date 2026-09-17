@@ -56,6 +56,9 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
   },
   category: "technology",
+  verification: {
+    google: "mhNCDa7uzMlwdkS5l3oF_TG_GmPILfoDzrdiZ_jYOIQ",
+  },
 };
 
 export const viewport: Viewport = {
