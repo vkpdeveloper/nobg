@@ -1,9 +1,15 @@
 # Model downloads and GPU recovery
 
-Desktop continues to use BEN2 FP16, pinned to
-`c552aa82688edce09f0ac9d2e31ad53d9d629010`, with an ONNX file of
-219,121,675 bytes. Mobile continues to use the existing 44,229,662-byte ISNet INT8
-model. Neither weights nor precision change for download optimization or recovery.
+Three models are pinned in `src/lib/model-config.ts` and selected per quality
+tier (see [mobile-processing.md](mobile-processing.md)): BEN2 FP16
+(219,121,675 bytes, revision `c552aa82688edce09f0ac9d2e31ad53d9d629010`),
+ISNet INT8 (44,229,662 bytes, revision
+`71eff2372ec9c8edbc6ca637ded591423d23b65a`), and U-2-Netp FP32
+(4,574,861 bytes, revision `7112208dbac3a3642496c8d54e2f0f9bb3dc1dc8`).
+Neither weights nor precision change for download optimization or recovery.
+U-2-Netp's `config.json` and `preprocessor_config.json` are served inline by
+`createModelFetch` (see `MODEL_CONFIG_OVERRIDES`) because Transformers.js does
+not know its `u2net` model type and its native preprocessor pads the input.
 
 The downloader starts parallel transfers after the first range's response
 headers confirm range support. Previously it waited for the entire first 8 MiB
@@ -17,20 +23,34 @@ The default CDN is `https://nobg-models.ordinity.com`, backed by the dedicated
 `nobg-models` R2 bucket. Override `NEXT_PUBLIC_MODEL_CDN_URL` with a separate HTTPS
 origin serving the prepared assets, then rebuild the app. Set it to an empty
 string to download directly from Hugging Face. Same-origin URLs are rejected so this option cannot route
-model traffic through the Vercel app. The CDN is used only for desktop BEN2;
-mobile keeps its existing pinned download.
+model traffic through the Vercel app. All three models resolve to CDN bundles
+under `/models/<key>/<sha256>/gzip-8m-v1`; the BEN2 path is unchanged, so the
+already-uploaded bundle stays valid.
 
-Prepare the bundle separately from the application build:
+Prepare the bundles separately from the application build:
 
 ```sh
-bun scripts/prepare-model-assets.mjs
+bun scripts/prepare-model-assets.mjs                 # all models
+bun scripts/prepare-model-assets.mjs --model=isnet   # one model
 # Or reuse a previously downloaded, checksum-verified source:
-bun scripts/prepare-model-assets.mjs --source=/path/to/model_fp16.onnx
+bun scripts/prepare-model-assets.mjs --model=ben2 --source=/path/to/model_fp16.onnx
 ```
 
 Upload the contents of `.model-assets/`, preserving object paths, to an R2
-bucket. This directory is excluded from Git and Vercel uploads. The 27 gzip
-parts total 174,211,266 bytes, 20.5% less than the original model. Preparation
+bucket. This directory is excluded from Git and Vercel uploads:
+
+```sh
+bun scripts/upload-model-assets.mjs
+```
+
+The script reads R2 credentials from the gitignored `.env.r2.local`
+(`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET_NAME`),
+forces `AWS_REGION=auto` (R2 rejects other regions), skips objects that
+already exist (the BEN2 bundle is not re-uploaded), and uploads each
+`manifest.json` last. **Never request a bundle URL — even a HEAD probe —
+before its upload finishes**: Cloudflare caches the 404 for hours at the
+edge, hiding objects that exist. The 27 gzip parts of the BEN2 bundle total
+174,211,266 bytes, 20.5% less than the original model. Preparation
 verifies the original and reconstructed SHA-256 against the publisher's file.
 The model weights, precision, and graph are unchanged by compression.
 
@@ -46,7 +66,8 @@ Hosting requirements:
 - Use `Cache-Control: public, max-age=31536000, immutable, no-transform` for
   versioned objects; serve the manifest as `application/json`.
 - Upload all parts and `NOTICE.txt` before `manifest.json`. Keep the
-  SHA/version path immutable. Include the bundled BEN2 MIT notice.
+  SHA/version path immutable. Each bundle carries its model's license notice:
+  BEN2 and ISNet are MIT; U-2-Netp is Apache-2.0.
 - Verify a cross-origin browser download and its reconstructed checksum before
   configuring the app's build environment.
 
@@ -213,9 +234,7 @@ than triggering GPU recovery.
 Checks:
 
 ```sh
-bun scripts/model-download.test.mjs
-bun scripts/remover-worker.test.mjs
-bun scripts/mobile-runtime.test.mjs
+bun run test
 bun run lint
 bun run build
 bun run start --port 3027

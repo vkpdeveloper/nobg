@@ -1,13 +1,19 @@
 "use client";
 
 import type { EngineStatus } from "@/lib/remover-pool";
+import { TIERS } from "@/lib/model-config";
 
 export function ReadyIndicator({ engine }: { engine: EngineStatus }) {
   if (engine.state === "ready") {
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="size-1.5 rounded-full bg-emerald-500" />
-        Ready
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="size-1.5 rounded-full bg-emerald-500" />
+          Ready · {TIERS[engine.tier].label}
+        </div>
+        {engine.notice && (
+          <div className="text-xs text-muted-foreground">{engine.notice}</div>
+        )}
       </div>
     );
   }

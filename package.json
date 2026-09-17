@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "bun scripts/device-tier.test.mjs && bun scripts/remover-worker.test.mjs && bun scripts/mobile-runtime.test.mjs && bun scripts/model-download.test.mjs && bun scripts/cleanup.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

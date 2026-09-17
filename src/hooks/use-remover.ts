@@ -52,6 +52,7 @@ export function useRemover() {
             ? Date.now() - startedAtRef.current.get(e.id)!
             : undefined,
           device: removerPool.getStatus().device,
+          tier: removerPool.getStatus().tier,
           width: e.width,
           height: e.height,
           input_bytes: sizeRef.current.get(e.id),

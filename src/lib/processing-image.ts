@@ -1,10 +1,10 @@
 export const MOBILE_MAX_EDGE = 1536;
 
 /** Bound the canvas before reading pixels into JS memory; never upscale. */
-export async function mobileImageCanvas(file: Blob): Promise<OffscreenCanvas> {
+export async function boundedImageCanvas(file: Blob, maxEdge: number): Promise<OffscreenCanvas> {
   const bitmap = await createImageBitmap(file);
   try {
-    const scale = Math.min(1, MOBILE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     const canvas = new OffscreenCanvas(
       Math.max(1, Math.round(bitmap.width * scale)),
       Math.max(1, Math.round(bitmap.height * scale)),

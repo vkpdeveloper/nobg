@@ -46,8 +46,13 @@ bun run dev
 
 Then open http://localhost:3000. Copy `.env.example` to `.env.local` if you want to set a public URL or analytics.
 
-Desktop model downloads use the external R2 CDN by default, with Hugging Face
-fallback and persistent browser caching. See [model hosting and benchmarks](docs/model-download.md)
+Model downloads use the external R2 CDN by default, with Hugging Face
+fallback and persistent browser caching. nobg picks one of four quality tiers
+(Best, Balanced, Light, Basic) from device signals — mobile/desktop, iOS,
+WebGPU and GPU vendor, cores, memory, and WASM SIMD — and a header selector
+can override it. If the tab dies mid-inference or a worker runs out of
+memory, the tier is automatically lowered for this and future visits.
+See [model hosting and benchmarks](docs/model-download.md)
 for configuration, same-device download comparisons, and the Mac WebGPU fix.
 
 ## License
