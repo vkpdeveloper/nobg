@@ -274,6 +274,42 @@ try {
   assert.match(compressedQuota, /Not enough browser storage/);
   assert.equal(requests.length, beforeCompressedQuota, "storage errors must not cause origin re-downloads");
   pass("compressed-part storage failures remain storage errors");
+
+  const modelFetch = await page.evaluate(async () => {
+    const { createModelFetch } = await import("/module.js");
+    const seen = [];
+    window.fetch = async (input) => {
+      const url = String(input);
+      seen.push(url);
+      return new Response("{}", { status: url.endsWith("manifest.json") ? 404 : 503 });
+    };
+    const modelFetch = createModelFetch(() => {}, "https://cdn.example.com");
+    const u2Config = "https://huggingface.co/BritishWerewolf/U-2-Netp/resolve/main/config.json";
+    const u2Prep = "https://huggingface.co/BritishWerewolf/U-2-Netp/resolve/main/preprocessor_config.json";
+    const cfg = await (await modelFetch(u2Config)).json();
+    const prep = await (await modelFetch(u2Prep)).json();
+    const cachedCfg = await (await caches.open("transformers-cache")).match(u2Config);
+    for (const url of [
+      "https://huggingface.co/xrds/isnet-general-onnx-int8/resolve/main/onnx/model_quantized.onnx",
+      "https://huggingface.co/onnx-community/BEN2-ONNX/resolve/main/onnx/model_fp16.onnx",
+    ]) {
+      await modelFetch(url).catch(() => {});
+    }
+    return { cfg, prep, cachedCfg: !!cachedCfg, seen };
+  });
+  assert.equal(modelFetch.cfg.model_type, "isnet");
+  assert.equal(modelFetch.cfg["transformers.js_config"].dtype, "fp32");
+  assert.equal(modelFetch.prep.image_processor_type, "ViTFeatureExtractor");
+  assert.deepEqual(modelFetch.prep.size, { height: 320, width: 320 });
+  assert.equal(modelFetch.prep.do_pad, false);
+  assert.equal(modelFetch.cachedCfg, false, "synthetic configs are never written to the model cache");
+  assert.ok(modelFetch.seen.includes("https://cdn.example.com/models/isnet/3b21a6706dc8d6e4ba9f5b31ebc6940f6c785b58862e27bb25daa9dd4424b87f/gzip-8m-v1/manifest.json"),
+    "isnet resolves to its own CDN bundle");
+  assert.ok(modelFetch.seen.includes("https://cdn.example.com/models/ben2/dfdc25f421f32a0d1268e0f2ff2153d340e8f1d52d3dd16f5dc33c1ce85cedf1/gzip-8m-v1/manifest.json"),
+    "ben2 keeps its existing CDN bundle path");
+  assert.ok(!modelFetch.seen.some((url) => url.includes("U-2-Netp")),
+    "u2netp configs are served inline without a network request");
+  pass("per-model CDN paths and inline u2netp config overrides");
   console.log(`${passed} browser download tests passed`);
 } finally {
   await browser.close();

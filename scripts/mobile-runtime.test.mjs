@@ -20,8 +20,19 @@ class FakeWorker {
   terminate() { this.terminated = true; }
   emit(data) { this.onmessage({ data }); }
 }
+const store = new Map();
+globalThis.localStorage = {
+  getItem: (key) => (store.has(key) ? store.get(key) : null),
+  setItem: (key, value) => store.set(key, String(value)),
+  removeItem: (key) => store.delete(key),
+  clear: () => store.clear(),
+};
+const listeners = {};
 globalThis.Worker = FakeWorker;
-globalThis.window = { isSecureContext: true };
+globalThis.window = {
+  isSecureContext: true,
+  addEventListener: (type, fn) => (listeners[type] ??= []).push(fn),
+};
 Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
   userAgent: "Android Mobile", hardwareConcurrency: 8, deviceMemory: 8,
 } });
@@ -66,7 +77,7 @@ removerPool.enqueue("after-retry", file);
 created[2].emit({ type: "fallback" });
 assert.ok(created[2].terminated, "failed runtime is terminated before CPU initialization");
 assert.equal(created.length, 4);
-assert.deepEqual(created[3].messages[0], { type: "load", device: "wasm" });
+assert.deepEqual(created[3].messages[0], { type: "load", tier: "light", device: "wasm" });
 created[2].emit({ type: "error", id: "gpu-retry", message: "stale error" });
 assert.notEqual(events.at(-1).state, "error", "messages from terminated workers are ignored");
 created[3].emit({ type: "ready", device: "wasm" });
@@ -97,7 +108,7 @@ created[1].emit({ type: "ready", device: "webgpu" });
 created[2].emit({ type: "ready", device: "webgpu" });
 created[1].emit({ type: "fallback" });
 assert.ok(created.slice(0, 3).every((worker) => worker.terminated));
-assert.deepEqual(created[3].messages[0], { type: "load", device: "wasm" });
+assert.deepEqual(created[3].messages[0], { type: "load", tier: "best", device: "wasm" });
 created[0].emit({ type: "result", id: "one", blob: file, width: 1, height: 1 });
 assert.deepEqual(completed, [], "late GPU results cannot complete a replayed job");
 created[3].emit({ type: "ready", device: "wasm" });
@@ -108,6 +119,74 @@ for (const id of ["one", "two", "three", "four"]) {
 assert.deepEqual(completed, ["one", "two", "three", "four"]);
 assert.equal(created.length, 4, "recovery stays on one CPU worker");
 console.log("PASS three active desktop GPU jobs and queued work recover once on a single CPU worker");
+
+// Live OOM downgrade: an OOM error on the light tier drops to basic, replays
+// the interrupted job, and persists the cap for the next page load.
+navigator.userAgent = "Android Mobile";
+delete navigator.gpu;
+store.clear();
+created.length = 0;
+const { removerPool: oomPool } = await import("../src/lib/remover-pool.ts?oom");
+const oomEvents = [];
+oomPool.onJob((event) => oomEvents.push(event));
+await oomPool.warmup();
+assert.deepEqual(created[0].messages[0], { type: "load", tier: "light" },
+  "an Android phone without WebGPU auto-selects the light tier");
+created[0].emit({ type: "ready", device: "wasm" });
+oomPool.enqueue("oom-job", file);
+assert.equal(created[0].messages.at(-1).type, "process");
+assert.ok(store.get("nobg:inflight"), "a job in flight leaves a marker");
+created[0].emit({ type: "error", id: "oom-job", message: "Out of memory" });
+assert.ok(created[0].terminated, "the OOM worker is terminated");
+assert.equal(store.get("nobg:tier-cap"), "basic", "the lower tier is persisted");
+assert.equal(created.length, 2);
+assert.deepEqual(created[1].messages[0], { type: "load", tier: "basic" });
+assert.match(oomPool.getStatus().notice ?? "", /ran out of memory/);
+created[1].emit({ type: "ready", device: "wasm" });
+assert.deepEqual(created[1].messages.at(-1), { type: "process", id: "oom-job", file },
+  "the interrupted job is replayed");
+created[1].emit({ type: "error", id: "oom-job", message: "Out of memory" });
+assert.equal(oomEvents.at(-1).state, "error", "a repeated OOM on the lowest tier fails the job");
+assert.equal(created.length, 2, "basic cannot downgrade further");
+console.log("PASS live OOM downgrade, persisted cap, job replay, and retry bound");
+
+// A fresh inflight marker at warmup means the page died mid-inference.
+store.clear();
+store.set("nobg:inflight", JSON.stringify({ tier: "light", at: Date.now() }));
+created.length = 0;
+const { removerPool: crashPool } = await import("../src/lib/remover-pool.ts?inflight");
+await crashPool.warmup();
+assert.equal(store.get("nobg:tier-cap"), "basic");
+assert.equal(store.has("nobg:inflight"), false, "the marker is cleared after reading");
+assert.match(crashPool.getStatus().notice ?? "", /ran out of memory/);
+assert.deepEqual(created[0].messages[0], { type: "load", tier: "basic" });
+
+store.clear();
+store.set("nobg:inflight", JSON.stringify({ tier: "light", at: Date.now() - 11 * 60 * 1000 }));
+created.length = 0;
+const { removerPool: stalePool } = await import("../src/lib/remover-pool.ts?stale");
+await stalePool.warmup();
+assert.equal(store.has("nobg:tier-cap"), false, "a stale marker does not cap the tier");
+assert.equal(store.has("nobg:inflight"), false);
+assert.deepEqual(created[0].messages[0], { type: "load", tier: "light" });
+console.log("PASS crash-marker cap, notice, clearing, and stale-marker ignore");
+
+// A normal tab close fires pagehide, which clears the marker so the next
+// load does not downgrade. An OOM kill never reaches the listener.
+store.set("nobg:inflight", JSON.stringify({ tier: "light", at: Date.now() }));
+assert.ok((listeners.pagehide ?? []).length > 0, "a pagehide listener is registered");
+for (const handler of listeners.pagehide) handler();
+assert.equal(store.has("nobg:inflight"), false, "pagehide clears the inflight marker");
+
+// Restarting a pool after a failure must not register the listener twice.
+const { removerPool: oncePool } = await import("../src/lib/remover-pool.ts?once");
+await oncePool.warmup();
+const pagehideCount = listeners.pagehide.length;
+created.at(-1).emit({ type: "error", message: "load failed" });
+oncePool.enqueue("after-failure", file);
+await settle();
+assert.equal(listeners.pagehide.length, pagehideCount, "pagehide listener is registered once per pool");
+console.log("PASS pagehide clears the marker and is registered once");
 
 const dir = await mkdtemp(join(tmpdir(), "nobg-mobile-test-"));
 execFileSync("bun", ["build", "src/lib/processing-image.ts", "--target=browser", `--outdir=${dir}`]);
@@ -122,20 +201,20 @@ try {
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   const sizes = await page.evaluate(async () => {
-    const { mobileImageCanvas } = await import("/module.js");
+    const { boundedImageCanvas, MOBILE_MAX_EDGE } = await import("/module.js");
     const results = [];
     for (const [width, height] of [[4000, 3000], [3000, 4000], [600, 400], [1, 4000]]) {
       const original = new OffscreenCanvas(width, height);
       const ctx = original.getContext("2d");
       ctx.fillStyle = "red";
       ctx.fillRect(0, 0, width / 2, height);
-      const resized = await mobileImageCanvas(await original.convertToBlob());
+      const resized = await boundedImageCanvas(await original.convertToBlob(), MOBILE_MAX_EDGE);
       const output = resized.getContext("2d");
       results.push({ width: resized.width, height: resized.height,
         alpha: output.getImageData(resized.width - 1, 0, 1, 1).data[3] });
     }
     let rejected = false;
-    try { await mobileImageCanvas(new Blob(["not an image"])); } catch { rejected = true; }
+    try { await boundedImageCanvas(new Blob(["not an image"]), MOBILE_MAX_EDGE); } catch { rejected = true; }
     return { results, rejected };
   });
   assert.deepEqual(sizes.results.map(({ width, height }) => [width, height]), [[1536, 1152], [1152, 1536], [600, 400], [1, 1536]]);

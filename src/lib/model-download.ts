@@ -1,13 +1,10 @@
-import { DESKTOP_MODEL, DESKTOP_ASSET_PATH, MODEL_CHUNK_SIZE, type CompressedModelManifest } from "./model-config";
+import { MODELS, MODEL_CONFIG_OVERRIDES, assetPath, MODEL_CHUNK_SIZE, type CompressedModelManifest } from "./model-config";
 
 // Keep the existing cache keys so people who already have the model keep it.
-export const MODEL_ID = DESKTOP_MODEL.id;
-export const MOBILE_MODEL_ID = "xrds/isnet-general-onnx-int8";
+export const MODEL_ID = MODELS.ben2.id;
+export const MOBILE_MODEL_ID = MODELS.isnet.id;
 // New downloads use immutable URLs, including all of their byte ranges.
-const MODEL_DOWNLOADS = [
-  DESKTOP_MODEL,
-  { id: MOBILE_MODEL_ID, revision: "71eff2372ec9c8edbc6ca637ded591423d23b65a", filename: "onnx/model_quantized.onnx", size: 44_229_662 },
-];
+const MODEL_DOWNLOADS = Object.values(MODELS);
 export const MODEL_CACHE = "transformers-cache";
 const PART_CACHE = "nobg-model-parts-v1";
 
@@ -276,11 +273,12 @@ export function createModelFetch(onProgress: DownloadOptions["onProgress"], cdn?
   const networkFetch = globalThis.fetch.bind(globalThis);
   // Opt in to a separately hosted model CDN. Never route model traffic through
   // the application's origin or add large model assets to the Vercel build.
-  let compressedBaseUrl: string | undefined;
+  let cdnBase: string | undefined;
   if (cdn) {
     try {
-      const base = new URL(`${cdn.replace(/\/$/, "")}${DESKTOP_ASSET_PATH}`);
-      if (base.protocol === "https:" && base.origin !== globalThis.location.origin) compressedBaseUrl = base.href;
+      const trimmed = cdn.replace(/\/$/, "");
+      const probe = new URL(`${trimmed}${assetPath(MODELS.ben2)}`);
+      if (probe.protocol === "https:" && probe.origin !== globalThis.location.origin) cdnBase = trimmed;
     } catch { /* Invalid optional CDN settings fall back to the pinned origin. */ }
   }
   return (input: string | URL, init?: RequestInit): Promise<Response> => {
@@ -290,12 +288,18 @@ export function createModelFetch(onProgress: DownloadOptions["onProgress"], cdn?
       return networkFetch(input, init);
     }
     const filename = url.slice(`https://huggingface.co/${model.id}/resolve/main/`.length);
+    const overrides = MODEL_CONFIG_OVERRIDES[model.key as keyof typeof MODELS];
+    if (overrides && filename in overrides) {
+      return Promise.resolve(new Response(JSON.stringify(overrides[filename]), {
+        headers: { "content-type": "application/json" },
+      }));
+    }
     return downloadModelFile({
       cacheKey: url,
       url: url.replace("/resolve/main/", `/resolve/${model.revision}/`),
       size: filename === model.filename ? model.size : undefined,
-      ...(compressedBaseUrl && model.id === MODEL_ID && filename === model.filename ? {
-        compressed: { baseUrl: compressedBaseUrl, sha256: DESKTOP_MODEL.sha256 },
+      ...(cdnBase && filename === model.filename ? {
+        compressed: { baseUrl: `${cdnBase}${assetPath(model)}`, sha256: model.sha256 },
       } : {}),
     }, { onProgress: (progress) => {
       if (filename === model.filename) onProgress(progress);

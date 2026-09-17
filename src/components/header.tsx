@@ -2,6 +2,7 @@
 
 import { GITHUB_URL } from "@/lib/site";
 import { track } from "@/lib/analytics";
+import { QualitySelect } from "./quality-select";
 import { SoundToggle } from "./sound-toggle";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -23,6 +24,7 @@ export function Header() {
     <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5">
       <span className="text-lg font-semibold tracking-tight">nobg</span>
       <div className="flex items-center gap-1">
+        <QualitySelect />
         <SoundToggle />
         <ThemeToggle />
         <a

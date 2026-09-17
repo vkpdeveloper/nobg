@@ -1,8 +1,8 @@
 import { pipeline, RawImage, env } from "@huggingface/transformers";
-import { createModelFetch, MODEL_ID, MOBILE_MODEL_ID, ModelDownloadError } from "../lib/model-download";
+import { createModelFetch, ModelDownloadError } from "../lib/model-download";
 import { isMobileDevice } from "../lib/device";
-import { mobileImageCanvas } from "../lib/processing-image";
-import { DEFAULT_MODEL_CDN_URL } from "../lib/model-config";
+import { boundedImageCanvas } from "../lib/processing-image";
+import { DEFAULT_MODEL_CDN_URL, MODELS, TIERS, TIER_ORDER, type Tier } from "../lib/model-config";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
@@ -22,6 +22,7 @@ let remover: Remover | null = null;
 let removerDevice: "webgpu" | "wasm" | null = null;
 let loading: Promise<Remover> | null = null;
 let forceWasm = false;
+let tier: Tier = "balanced";
 
 // Transformers.js retains rejected initialization/inference promises in its
 // worker-global chains. Recovery must use a new worker, even for CPU execution.
@@ -42,14 +43,15 @@ interface FileProgressInfo {
 }
 
 async function createPipeline(device: "webgpu" | "wasm"): Promise<Remover> {
-  const lightweight = mobile;
-  return (await pipeline("background-removal", lightweight ? MOBILE_MODEL_ID : MODEL_ID, {
+  const { model: key, inputSize } = TIERS[tier];
+  const spec = MODELS[key];
+  const r = (await pipeline("background-removal", spec.id, {
     device,
-    dtype: lightweight ? "q8" : "fp16",
+    dtype: spec.dtype,
     // ORT's advanced fusion generates an invalid mixed-f16/f32 LayerNorm shader
     // for BEN2. Basic optimization preserves the original graph's casts while
     // keeping the exact FP16 weights and WebGPU execution.
-    session_options: device === "webgpu" && !lightweight ? {
+    session_options: device === "webgpu" && key === "ben2" ? {
       graphOptimizationLevel: "basic",
     } : undefined,
     progress_callback: (info: FileProgressInfo) => {
@@ -66,6 +68,15 @@ async function createPipeline(device: "webgpu" | "wasm"): Promise<Remover> {
       }
     },
   })) as unknown as Remover;
+  // ISNet's ONNX inputs are dynamic, so the light tier runs the same file at a
+  // smaller processor size instead of downloading a different model.
+  if (inputSize !== spec.inputSize) {
+    const imageProcessor = (r as unknown as {
+      processor?: { image_processor?: { size?: { height: number; width: number } } };
+    }).processor?.image_processor;
+    if (imageProcessor) imageProcessor.size = { height: inputSize, width: inputSize };
+  }
+  return r;
 }
 
 async function load(): Promise<Remover> {
@@ -94,8 +105,9 @@ async function load(): Promise<Remover> {
 
 async function processImage(id: string, file: Blob) {
   const r = await load();
-  const image = mobile
-    ? RawImage.fromCanvas(await mobileImageCanvas(file))
+  const { maxEdge } = TIERS[tier];
+  const image = maxEdge > 0
+    ? RawImage.fromCanvas(await boundedImageCanvas(file, maxEdge))
     : await RawImage.fromBlob(file);
   let output: RawImage | RawImage[];
   try {
@@ -122,6 +134,7 @@ self.onmessage = async (e: MessageEvent) => {
   try {
     if (msg.type === "load") {
       forceWasm = msg.device === "wasm";
+      if (TIER_ORDER.includes(msg.tier)) tier = msg.tier;
       await load();
     } else if (msg.type === "process") {
       await processImage(msg.id, msg.file);
